@@ -1,4 +1,4 @@
-# phone-buttons
+# nura-basic-terminal
 
 Make a postmarketOS phone usable **without a GUI**. If your phone runs a bare
 VT console (fbcon) — as a hotspot, a server, a mini-terminal — the hardware
@@ -33,7 +33,7 @@ Tested on a Xiaomi Mi A2 Lite (*daisy*, msm8953) running postmarketOS v25.06,
 ## Install
 
 Copy this directory to the phone (e.g. `scp -r . phone:/tmp/phone-buttons`),
-then on the phone as root:
+then on the phone as a sudoer:
 
 ```sh
 doas sh /tmp/phone-buttons/install.sh          # buttons + fonts
