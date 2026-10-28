@@ -1,9 +1,9 @@
 #!/bin/sh
 # Install the fbcon status bar (battery top-right, cellular top-left).
 # Run as root on the postmarketOS device:
-#   doas sh /tmp/phone-buttons/install-statusbar.sh
+#   doas sh /tmp/basic-terminal/install-statusbar.sh
 set -e
-SRC=/tmp/phone-buttons
+SRC=/tmp/basic-terminal
 
 install -m 755 "$SRC/phone-statusbar" /usr/local/bin/
 install -m 755 "$SRC/phone-font" /usr/local/bin/  # now also records font-px

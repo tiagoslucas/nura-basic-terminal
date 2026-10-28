@@ -32,12 +32,12 @@ Tested on a Xiaomi Mi A2 Lite (*daisy*, msm8953) running postmarketOS v25.06,
 
 ## Install
 
-Copy this directory to the phone (e.g. `scp -r . phone:/tmp/phone-buttons`),
+Copy this directory to the phone (e.g. `scp -r . phone:/tmp/basic-terminal`),
 then on the phone as a sudoer:
 
 ```sh
-doas sh /tmp/phone-buttons/install.sh          # buttons + fonts
-doas sh /tmp/phone-buttons/install-statusbar.sh  # status bar
+doas sh /tmp/basic-terminal/install.sh          # buttons + fonts
+doas sh /tmp/basic-terminal/install-statusbar.sh  # status bar
 ```
 
 What the installers do:
@@ -109,7 +109,7 @@ than two terminal rows.
 ## Files
 
 - `install.sh`, `install-statusbar.sh` — root installers (run from
-  `/tmp/phone-buttons` on the device)
+  `/tmp/basic-terminal` on the device)
 - `phone-buttons.toml` — hkdm bindings
 - `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)

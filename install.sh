@@ -1,9 +1,9 @@
 #!/bin/sh
 # Install phone-buttons: power = screen toggle, volume = font size.
 # Run as root on the postmarketOS device:
-#   doas sh /tmp/pb-install.sh
+#   doas sh /tmp/basic-terminal/install.sh
 set -e
-SRC=/tmp/phone-buttons
+SRC=/tmp/basic-terminal
 
 install -m 644 "$SRC/ter-148n.psf.gz" /usr/share/consolefonts/
 install -m 755 "$SRC/phone-screen-toggle" "$SRC/phone-font" /usr/local/bin/
