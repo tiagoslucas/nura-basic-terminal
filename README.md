@@ -54,7 +54,8 @@ What the installers do:
 
 **Power button** (`phone-screen-toggle`): off = backlight 0 + `setterm
 --blank force` (the logged-in session on tty1 is untouched); on = `setterm
---blank poke` + restore the saved brightness. buffyboard draws only while
+--blank poke` + restore the saved brightness, then a `SIGUSR1` nudge so
+the status bar repaints immediately. buffyboard draws only while
 the screen is lit, so the keyboard hides/shows along with it. The
 `ttyescape` combo (vol-down held + power taps) is preserved: the script
 bails out if `/tmp/ttyescape.tmp` exists, and `phone-font down` ignores
@@ -74,14 +75,15 @@ pairs; PSF2 wants UTF-8 values with 0xFF/0xFE markers.
 
 **Status bar** (`phone-statusbar`): a Python daemon that paints only the
 top 96 px band of `/dev/fb0` — the notch zone, useless for text anyway —
-every 10 s, plus immediately when the screen turns on (a 1 s backlight
-poll catches the wake). The terminal below is never redrawn; text that
-scrolls under the bar is healed by the next repaint. The bar is a
-**fixed** height with its own fixed 24×48 font, so it never moves when
-you change the console font. Painting pauses while the backlight is off,
-and values (battery from `/sys/class/power_supply/*/capacity|status`,
-cellular from `mmcli -m any`) are fetched only once per repaint — the
-sparse cadence keeps the phone's battery drain from the bar negligible.
+every 10 s, and immediately when the screen turns on: `phone-screen-toggle`
+sends it `SIGUSR1`, which interrupts its sleep. While the screen is dark
+the daemon sleeps in 30 s chunks (a backlight read as a safety net), so it
+costs essentially nothing between repaints. The terminal below is never
+redrawn; text that scrolls under the bar is healed by the next repaint.
+The bar is a **fixed** height with its own fixed 24×48 font, so it never
+moves when you change the console font. Values (battery from
+`/sys/class/power_supply/*/capacity|status`, cellular from `mmcli -m any`)
+are fetched only once per repaint.
 
 ## Customizing
 

@@ -6,13 +6,18 @@ notch — and never touches the terminal below it. The bar is a FIXED 96px
 tall with fixed-size text, independent of the console font, so it never
 moves or resizes when the terminal font changes. To save battery the band
 is repainted only every 10s, and once immediately when the screen turns
-on (the 1s backlight poll detects the off->on transition); each repaint
-also repairs any console text that scrolled underneath it. Nothing is
+on: phone-screen-toggle SIGUSR1s this daemon after restoring the
+backlight, and the signal interrupts its sleep. While the screen is dark
+the daemon sleeps in 30s chunks, reading the backlight only as a safety
+net for wakes that don't go through the script. Each repaint also
+repairs any console text that scrolled underneath it. Nothing is
 drawn within 5px of the left/right screen edges. Values (mmcli, battery
-sysfs) are fetched once per repaint. Painting is skipped while the
-backlight is off.
+sysfs) are fetched once per repaint.
 """
 import gzip
+import os
+import select
+import signal
 import struct
 import subprocess
 import time
@@ -27,6 +32,7 @@ BAR_H = 96                            # fixed: covers the 70px notch, 2 rows at 
 EDGE_MARGIN = 5                       # px unused at each screen edge
 TEXT_MARGIN = 16                      # px between screen edge and indicator text
 PAINT_EVERY = 10                       # seconds between repaints (battery)
+POLL_EVERY = 30                        # safety backlight check while dark
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",
@@ -189,18 +195,24 @@ def main():
     w, _h = map(int, open(f"{SYSFB}/virtual_size").read().split(","))
     stride = int(open(f"{SYSFB}/stride").read().strip())
     font = Font.load(BAR_FONT)
+
+    # Wake pipe: SIGUSR1 from phone-screen-toggle (screen back on) drops a
+    # byte here via set_wakeup_fd, which interrupts the select() below so
+    # the bar repaints the moment the screen lights up.
+    r, wfd = os.pipe()
+    os.set_blocking(wfd, False)
+    signal.set_wakeup_fd(wfd)
+
+    def _noop(_signum, _frame):
+        pass  # the byte matters, not the handler
+
+    signal.signal(signal.SIGUSR1, _noop)
+
     net = (None, None)
     last_paint = 0.0
-    screen_on = None
     with open(FB, "r+b", buffering=0) as fb:
         while True:
-            # 1s backlight poll: cheap, and catches the off->on transition
-            # so the bar appears right when the screen wakes.
-            on = backlight_on()
-            woke = screen_on is False and on
-            screen_on = on
-            now = time.time()
-            if on and (woke or now - last_paint >= PAINT_EVERY):
+            if backlight_on() and time.time() - last_paint >= PAINT_EVERY:
                 try:
                     net = read_modem()
                     cap, status = read_battery()
@@ -227,9 +239,18 @@ def main():
                     paint(fb, buf, stride, w)
                 except Exception as e:
                     print(f"statusbar: {e}", flush=True)
-                # count failed attempts too, so errors don't spam every 1s
-                last_paint = now
-            time.sleep(1)
+                # count failed attempts too, so errors don't spam the log
+                last_paint = time.time()
+            if backlight_on():
+                delay = max(0.05, PAINT_EVERY - (time.time() - last_paint))
+            else:
+                delay = POLL_EVERY
+            if select.select([r], [], [], delay)[0]:
+                try:
+                    os.read(r, 4096)  # drain wake bytes
+                except OSError:
+                    pass
+                last_paint = 0.0  # poked (screen on): repaint right away
 
 
 if __name__ == "__main__":

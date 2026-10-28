@@ -19,6 +19,9 @@ if [ -f "$STATE_DIR/screen-off" ]; then
     else
         echo 1500 > "$BL/brightness"
     fi
+    # nudge the status bar awake — it sleeps while the screen is dark
+    systemctl kill -s SIGUSR1 phone-statusbar 2>/dev/null \
+        || pkill -USR1 -f /usr/local/bin/phone-statusbar 2>/dev/null
 else
     cat "$BL/brightness" > "$STATE_DIR/brightness" 2>/dev/null
     touch "$STATE_DIR/screen-off"
