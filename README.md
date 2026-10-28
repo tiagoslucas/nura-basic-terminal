@@ -74,12 +74,14 @@ pairs; PSF2 wants UTF-8 values with 0xFF/0xFE markers.
 
 **Status bar** (`phone-statusbar`): a Python daemon that paints only the
 top 96 px band of `/dev/fb0` — the notch zone, useless for text anyway —
-about once a second. The terminal below is never redrawn; text that scrolls
-under the bar is healed by the next repaint. The bar is a **fixed** height
-with its own fixed 24×48 font, so it never moves when you change the
-console font. Painting pauses while the backlight is off. Data: battery
-from `/sys/class/power_supply/*/capacity|status`, cellular from `mmcli -m
-any` (polled every 10 s, cached between).
+every 10 s, plus immediately when the screen turns on (a 1 s backlight
+poll catches the wake). The terminal below is never redrawn; text that
+scrolls under the bar is healed by the next repaint. The bar is a
+**fixed** height with its own fixed 24×48 font, so it never moves when
+you change the console font. Painting pauses while the backlight is off,
+and values (battery from `/sys/class/power_supply/*/capacity|status`,
+cellular from `mmcli -m any`) are fetched only once per repaint — the
+sparse cadence keeps the phone's battery drain from the bar negligible.
 
 ## Customizing
 

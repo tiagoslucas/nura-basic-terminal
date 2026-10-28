@@ -4,11 +4,13 @@
 Paints only the top band of /dev/fb0 — the region occupied by the display
 notch — and never touches the terminal below it. The bar is a FIXED 96px
 tall with fixed-size text, independent of the console font, so it never
-moves or resizes when the terminal font changes; the whole band is repainted
-(~1/s), which also repairs any console text that scrolled underneath it.
-Nothing is drawn within 5px of the left/right screen edges. Value polling
-is decoupled from painting (mmcli every 10s, battery sysfs is free).
-Painting is skipped while the backlight is off.
+moves or resizes when the terminal font changes. To save battery the band
+is repainted only every 10s, and once immediately when the screen turns
+on (the 1s backlight poll detects the off->on transition); each repaint
+also repairs any console text that scrolled underneath it. Nothing is
+drawn within 5px of the left/right screen edges. Values (mmcli, battery
+sysfs) are fetched once per repaint. Painting is skipped while the
+backlight is off.
 """
 import gzip
 import struct
@@ -24,7 +26,7 @@ BAR_FONT = f"{FONTS}/ter-148n.psf.gz"  # 24x48, fixed regardless of console font
 BAR_H = 96                            # fixed: covers the 70px notch, 2 rows at 48px
 EDGE_MARGIN = 5                       # px unused at each screen edge
 TEXT_MARGIN = 16                      # px between screen edge and indicator text
-NET_EVERY = 10                        # seconds between mmcli polls
+PAINT_EVERY = 10                       # seconds between repaints (battery)
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",
@@ -188,15 +190,19 @@ def main():
     stride = int(open(f"{SYSFB}/stride").read().strip())
     font = Font.load(BAR_FONT)
     net = (None, None)
-    net_at = 0.0
+    last_paint = 0.0
+    screen_on = None
     with open(FB, "r+b", buffering=0) as fb:
         while True:
-            try:
-                if backlight_on():
-                    now = time.time()
-                    if now - net_at > NET_EVERY:
-                        net = read_modem()
-                        net_at = now
+            # 1s backlight poll: cheap, and catches the off->on transition
+            # so the bar appears right when the screen wakes.
+            on = backlight_on()
+            woke = screen_on is False and on
+            screen_on = on
+            now = time.time()
+            if on and (woke or now - last_paint >= PAINT_EVERY):
+                try:
+                    net = read_modem()
                     cap, status = read_battery()
 
                     tech, sig = net
@@ -219,8 +225,10 @@ def main():
 
                     buf = build_band(font, w, left, lrgb, right, rrgb)
                     paint(fb, buf, stride, w)
-            except Exception as e:
-                print(f"statusbar: {e}", flush=True)
+                except Exception as e:
+                    print(f"statusbar: {e}", flush=True)
+                # count failed attempts too, so errors don't spam every 1s
+                last_paint = now
             time.sleep(1)
 
 
