@@ -1,0 +1,27 @@
+#!/bin/sh
+# Toggle the phone screen on/off. Run as root by hkdm on KEY_POWER release.
+# Screen off = backlight 0 + console blank (session on tty1 is untouched).
+# Skips the toggle when volume-down is held (ttyescape combo uses
+# vol-down + power; /tmp/ttyescape.tmp exists while vol-down is down).
+STATE_DIR=/run/phone-buttons
+BL=/sys/class/backlight/backlight
+
+mkdir -p "$STATE_DIR"
+touch "$STATE_DIR/power-recent"
+[ -f /tmp/ttyescape.tmp ] && exit 0
+
+if [ -f "$STATE_DIR/screen-off" ]; then
+    rm -f "$STATE_DIR/screen-off"
+    # wake the console first, then bring the light back
+    setterm --blank poke > /dev/tty1 2>/dev/null
+    if [ -s "$STATE_DIR/brightness" ]; then
+        cat "$STATE_DIR/brightness" > "$BL/brightness"
+    else
+        echo 1500 > "$BL/brightness"
+    fi
+else
+    cat "$BL/brightness" > "$STATE_DIR/brightness" 2>/dev/null
+    touch "$STATE_DIR/screen-off"
+    echo 0 > "$BL/brightness"
+    setterm --blank force > /dev/tty1 2>/dev/null
+fi

@@ -1,0 +1,23 @@
+# Power button: toggle screen (and keyboard visibility) without logging out.
+# Volume buttons: console font size. ttyescape's vol-down + power combo is
+# preserved by guards inside the scripts (see /usr/local/bin/phone-*).
+[[events]]
+name = "screen toggle"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_POWER"]
+command = "/usr/local/bin/phone-screen-toggle"
+
+[[events]]
+name = "font bigger"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_VOLUMEUP"]
+command = "/usr/local/bin/phone-font up"
+
+[[events]]
+name = "font smaller"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_VOLUMEDOWN"]
+command = "/usr/local/bin/phone-font down"

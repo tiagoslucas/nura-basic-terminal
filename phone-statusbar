@@ -1,0 +1,228 @@
+#!/usr/bin/python3
+"""Status bar drawn over the top of the fbcon: cellular (left) + battery (right).
+
+Paints only the top band of /dev/fb0 — the region occupied by the display
+notch — and never touches the terminal below it. The bar is a FIXED 96px
+tall with fixed-size text, independent of the console font, so it never
+moves or resizes when the terminal font changes; the whole band is repainted
+(~1/s), which also repairs any console text that scrolled underneath it.
+Nothing is drawn within 5px of the left/right screen edges. Value polling
+is decoupled from painting (mmcli every 10s, battery sysfs is free).
+Painting is skipped while the backlight is off.
+"""
+import gzip
+import struct
+import subprocess
+import time
+
+FB = "/dev/fb0"
+SYSFB = "/sys/class/graphics/fb0"
+FONTS = "/usr/share/consolefonts"
+BACKLIGHT = "/sys/class/backlight/backlight/brightness"
+BATTERY = "/sys/class/power_supply/qcom-battery"
+BAR_FONT = f"{FONTS}/ter-148n.psf.gz"  # 24x48, fixed regardless of console font
+BAR_H = 96                            # fixed: covers the 70px notch, 2 rows at 48px
+EDGE_MARGIN = 5                       # px unused at each screen edge
+TEXT_MARGIN = 16                      # px between screen edge and indicator text
+NET_EVERY = 10                        # seconds between mmcli polls
+
+TECH_LABEL = {
+    "lte": "4G", "nr": "5G", "nr5g": "5G",
+    "umts": "3G", "hsdpa": "3G", "hsupa": "3G", "hspa": "3G", "hspa+": "3G",
+    "wcdma": "3G", "evdo": "3G",
+    "gsm": "2G", "gprs": "2G", "edge": "2G",
+}
+
+WHITE = (255, 255, 255)
+GREEN = (0, 230, 0)
+RED = (255, 60, 60)
+GRAY = (70, 70, 70)
+
+
+class Font:
+    """PSF1/PSF2 console font loader (bitmap glyphs + unicode map)."""
+
+    def __init__(self, glyphs, cmap, width, height):
+        self.glyphs, self.cmap = glyphs, cmap
+        self.width, self.height = width, height
+        self.rowbytes = (width + 7) // 8
+
+    @classmethod
+    def load(cls, path):
+        raw = gzip.open(path, "rb").read() if path.endswith(".gz") \
+            else open(path, "rb").read()
+        if raw[:2] == b"\x36\x04":
+            return cls._load_psf1(raw)
+        if raw[:4] == b"\x72\xb5\x4a\x86":
+            return cls._load_psf2(raw)
+        raise ValueError(f"not a PSF font: {path}")
+
+    @classmethod
+    def _load_psf1(cls, raw):
+        mode, charsize = raw[2], raw[3]
+        n = 512 if mode & 1 else 256
+        glyphs = [raw[4 + i * charsize: 4 + (i + 1) * charsize] for i in range(n)]
+        cmap = {}
+        if mode & 2:
+            off, gi, vals = 4 + n * charsize, 0, []
+            while gi < n and off + 1 < len(raw):
+                (v,) = struct.unpack("<H", raw[off:off + 2])  # Terminus: LE
+                off += 2
+                if v == 0xFFFF:
+                    for c in vals:
+                        cmap.setdefault(c, gi)
+                    vals, gi = [], gi + 1
+                elif v == 0xFFFE:
+                    vals = []          # sequence: keep first char only
+                elif v >= 0xD800:
+                    pass               # surrogate halves: not needed here
+                else:
+                    vals.append(v)
+        return cls(glyphs, cmap, 8, charsize)
+
+    @classmethod
+    def _load_psf2(cls, raw):
+        _, hdr, flags, length, charsize, height, width = \
+            struct.unpack("<7I", raw[4:32])
+        glyphs = [raw[hdr + i * charsize: hdr + (i + 1) * charsize]
+                  for i in range(length)]
+        cmap = {}
+        if flags & 1:
+            off, gi, vals, pend = hdr + length * charsize, 0, [], b""
+            while gi < length and off < len(raw):
+                b = raw[off]
+                off += 1
+                if b == 0xFF:
+                    for c in vals:
+                        cmap.setdefault(c, gi)
+                    vals, gi, pend = [], gi + 1, b""
+                elif b == 0xFE:
+                    vals, pend = [], b""
+                else:
+                    pend += bytes([b])
+                    try:
+                        vals.append(ord(pend.decode("utf-8")))
+                        pend = b""
+                    except UnicodeDecodeError:
+                        pass
+        return cls(glyphs, cmap, width, height)
+
+
+def render_text(font, buf, rowbytes, text, x, y, rgb):
+    px = struct.pack("<I", (rgb[0] << 16) | (rgb[1] << 8) | rgb[2])
+    for ch in text:
+        gi = font.cmap.get(ord(ch), font.cmap.get(ord("?"), 0))
+        g = font.glyphs[gi]
+        for gy in range(font.height):
+            row = g[gy * font.rowbytes:(gy + 1) * font.rowbytes]
+            base = (y + gy) * rowbytes + x * 4
+            for gx in range(font.width):
+                if (row[gx // 8] >> (7 - gx % 8)) & 1:
+                    p = base + gx * 4
+                    buf[p:p + 4] = px
+        x += font.width
+
+
+def build_band(font, w, left, left_rgb, right, right_rgb):
+    rowbytes = w * 4
+    buf = bytearray(BAR_H * rowbytes)  # black background
+    ty = (BAR_H - font.height) // 2
+    render_text(font, buf, rowbytes, left, TEXT_MARGIN, ty, left_rgb)
+    rx = w - TEXT_MARGIN - len(right) * font.width
+    render_text(font, buf, rowbytes, right, rx, ty, right_rgb)
+    # separator line under the bar, clear of the screen edges
+    line = struct.pack("<I", (GRAY[0] << 16) | (GRAY[1] << 8) | GRAY[2]) \
+        * (w - 2 * EDGE_MARGIN)
+    for y in (BAR_H - 2, BAR_H - 1):
+        buf[y * rowbytes + EDGE_MARGIN * 4:
+            (y + 1) * rowbytes - EDGE_MARGIN * 4] = line
+    return buf
+
+
+def paint(fb, buf, stride, w):
+    rb = w * 4
+    for y in range(len(buf) // rb):
+        fb.seek(y * stride)
+        fb.write(buf[y * rb:(y + 1) * rb])
+
+
+def read_battery():
+    try:
+        cap = int(open(f"{BATTERY}/capacity").read().strip())
+        status = open(f"{BATTERY}/status").read().strip()
+        return cap, status
+    except (OSError, ValueError):
+        return None, ""
+
+
+def read_modem():
+    try:
+        out = subprocess.run(["mmcli", "-m", "any", "-K"],
+                             capture_output=True, text=True,
+                             timeout=8).stdout
+    except Exception:
+        return None, None
+    tech = sig = None
+    for line in out.splitlines():
+        key, _, val = line.partition(":")
+        key, val = key.strip(), val.strip()
+        if key.endswith("access-technologies.value[1]"):
+            tech = val
+        elif key.endswith("signal-quality.value"):
+            try:
+                sig = int(val)
+            except ValueError:
+                pass
+    return tech, sig
+
+
+def backlight_on():
+    try:
+        return int(open(BACKLIGHT).read().strip()) > 0
+    except (OSError, ValueError):
+        return True
+
+
+def main():
+    w, _h = map(int, open(f"{SYSFB}/virtual_size").read().split(","))
+    stride = int(open(f"{SYSFB}/stride").read().strip())
+    font = Font.load(BAR_FONT)
+    net = (None, None)
+    net_at = 0.0
+    with open(FB, "r+b", buffering=0) as fb:
+        while True:
+            try:
+                if backlight_on():
+                    now = time.time()
+                    if now - net_at > NET_EVERY:
+                        net = read_modem()
+                        net_at = now
+                    cap, status = read_battery()
+
+                    tech, sig = net
+                    if tech:
+                        label = TECH_LABEL.get(tech, tech.upper())
+                        left = f"{label} {sig}%" if sig is not None else label
+                        lrgb = WHITE if (sig is None or sig >= 15) else RED
+                    else:
+                        left, lrgb = "NO NET", RED
+
+                    if cap is None:
+                        right, rrgb = "?BAT", RED
+                    elif status == "Full":
+                        right, rrgb = "FULL", GREEN
+                    elif status == "Charging":
+                        right, rrgb = f"CHG {cap}%", GREEN
+                    else:
+                        right = f"{cap}%"
+                        rrgb = RED if cap <= 15 else WHITE
+
+                    buf = build_band(font, w, left, lrgb, right, rrgb)
+                    paint(fb, buf, stride, w)
+            except Exception as e:
+                print(f"statusbar: {e}", flush=True)
+            time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()

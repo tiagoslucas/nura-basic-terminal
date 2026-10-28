@@ -1,0 +1,13 @@
+[Unit]
+Description=Phone status bar (cellular + battery) over the fbcon top rows
+ConditionPathExists=/dev/fb0
+After=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/phone-statusbar
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
