@@ -11,7 +11,10 @@ the backlight from hunting around a threshold.
 Runs as root. While the screen is off (backlight 0) it blocks on its
 wake pipe and touches nothing: the backlight has a single writer
 (phone-screen-toggle), which SIGUSR1s this daemon when it lights the
-screen again — the same contract the status bar uses.
+screen again — the same contract the status bar uses. A poke means
+"the wake path just ran", so the daemon then sets the ambient level
+even if the restored brightness was a stale 0 (a saved-0 can happen
+when the screen was turned off while already dark).
 
 Manual changes (echo N > .../brightness) are adopted as the new
 baseline but overridden at the next adjustment; to hold a level, stop
@@ -75,10 +78,11 @@ def read_brightness():
         return -1
 
 
-def write_brightness(value):
-    # re-check the screen state right before writing, so a screen-off
-    # that raced in between can't be undone by us
-    if read_brightness() <= 0:
+def write_brightness(value, force=False):
+    # never undo a screen-off — unless we were just poked awake: the
+    # wake path restores a SAVED brightness, which can be a stale 0,
+    # and then it's our job to light the screen properly
+    if not force and read_brightness() <= 0:
         return False
     try:
         open(BACKLIGHT + "/brightness", "w").write(str(value))
@@ -128,14 +132,16 @@ def main():
     signal.signal(signal.SIGUSR1, _noop)
 
     ema = None
+    poked = False
     while True:
-        if read_brightness() <= 0:
+        if not poked and read_brightness() <= 0:
             # screen off: block until poked; nothing to adjust in the dark
-            select.select([r], [], [], None)
-            try:
-                os.read(r, 4096)
-            except OSError:
-                pass
+            if select.select([r], [], [], None)[0]:
+                try:
+                    os.read(r, 4096)
+                except OSError:
+                    pass
+                poked = True   # the wake path just ran: adjust even from 0
             ema = None   # resample from scratch after any pause
             continue
 
@@ -144,8 +150,11 @@ def main():
             ema = lux if ema is None else ema + EMA_ALPHA * (lux - ema)
             cur = read_brightness()
             tgt = target_brightness(ema, lo, hi, lux_max)
-            if cur > 0 and abs(tgt - cur) > max(1, int(cur * DEADBAND)):
-                write_brightness(tgt)
+            # a fresh poke sets the ambient level exactly, even if the
+            # wake path restored a stale 0; otherwise respect the deadband
+            if poked or abs(tgt - cur) > max(1, int(cur * DEADBAND)):
+                write_brightness(tgt, force=poked)
+            poked = False
 
         # while lit: sample again in `poll` seconds (or sooner if poked)
         if select.select([r], [], [], poll)[0]:
@@ -153,7 +162,7 @@ def main():
                 os.read(r, 4096)
             except OSError:
                 pass
-            # a poke while lit just triggers an immediate re-sample
+            poked = True   # re-sample immediately
 
 
 if __name__ == "__main__":
