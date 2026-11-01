@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""Status bar drawn over the top of the fbcon: cellular (left) + battery (right).
+"""Status bar drawn over the top of the fbcon: cellular (left) + battery and
+wall clock (right).
 
 Paints only the top band of /dev/fb0 — the region occupied by the display
 notch — and never touches the terminal below it. The bar is a FIXED 96px
@@ -234,6 +235,9 @@ def main():
                     else:
                         right = f"{cap}%"
                         rrgb = RED if cap <= 15 else WHITE
+
+                    # clock beside the battery, e.g. "87% 14:05"
+                    right += time.strftime(" %H:%M")
 
                     buf = build_band(font, w, left, lrgb, right, rrgb)
                     paint(fb, buf, stride, w)
