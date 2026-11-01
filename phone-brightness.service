@@ -1,0 +1,11 @@
+[Unit]
+Description=Phone adaptive backlight (follows the ambient light sensor)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/phone-brightness
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,160 @@
+#!/usr/bin/python3
+"""Adaptive backlight: follow the room brightness.
+
+Reads the ambient light sensor (any IIO device exposing
+in_illuminance_input, an LTR-F216A on this phone) and maps lux to a
+backlight level on a logarithmic curve — perception is logarithmic, so
+equal ratios of light should give equal ratios of brightness. Readings
+are smoothed with an exponential moving average and a deadband keeps
+the backlight from hunting around a threshold.
+
+Runs as root. While the screen is off (backlight 0) it blocks on its
+wake pipe and touches nothing: the backlight has a single writer
+(phone-screen-toggle), which SIGUSR1s this daemon when it lights the
+screen again — the same contract the status bar uses.
+
+Manual changes (echo N > .../brightness) are adopted as the new
+baseline but overridden at the next adjustment; to hold a level, stop
+the service. Tunables live in /etc/phone-brightness.conf.
+"""
+import glob
+import math
+import os
+import select
+import signal
+import sys
+import time
+
+BACKLIGHT = "/sys/class/backlight/backlight"
+IIO_DEVICES = "/sys/bus/iio/devices"
+CONFIG = "/etc/phone-brightness.conf"
+
+EMA_ALPHA = 0.5     # weight of the newest sample (0..1): higher = faster
+DEADBAND = 0.12     # adjust only when target differs from current by >12%
+
+
+def load_config(path):
+    """Parse KEY=int lines from the config file (comments with #)."""
+    cfg = {}
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return cfg
+    for line in lines:
+        line = line.split("#", 1)[0].strip()
+        key, sep, val = line.partition("=")
+        if not sep or not key.strip():
+            continue
+        try:
+            cfg[key.strip()] = int(val.strip())
+        except ValueError:
+            pass
+    return cfg
+
+
+def find_als():
+    """First IIO device exposing processed illuminance, in lux."""
+    for dev in sorted(glob.glob(IIO_DEVICES + "/iio:device*")):
+        path = dev + "/in_illuminance_input"
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def read_lux(path):
+    try:
+        return float(open(path).read())
+    except (OSError, ValueError):
+        return None
+
+
+def read_brightness():
+    try:
+        return int(open(BACKLIGHT + "/brightness").read())
+    except (OSError, ValueError):
+        return -1
+
+
+def write_brightness(value):
+    # re-check the screen state right before writing, so a screen-off
+    # that raced in between can't be undone by us
+    if read_brightness() <= 0:
+        return False
+    try:
+        open(BACKLIGHT + "/brightness", "w").write(str(value))
+        return True
+    except OSError:
+        return False
+
+
+def target_brightness(lux, lo, hi, lux_max):
+    """Logarithmic lux -> brightness: lo in the dark, hi at lux_max."""
+    t = math.log10(1.0 + max(0.0, lux)) / math.log10(1.0 + lux_max)
+    t = min(1.0, max(0.0, t))
+    return int(round(lo * (hi / lo) ** t))
+
+
+def main():
+    cfg = load_config(CONFIG)
+    try:
+        max_hw = int(open(BACKLIGHT + "/max_brightness").read())
+    except (OSError, ValueError):
+        max_hw = 4095
+
+    lo = max(1, cfg.get("MIN_BRIGHTNESS", 60))
+    hi = min(max_hw, cfg.get("MAX_BRIGHTNESS", max_hw))
+    lux_max = max(10, cfg.get("LUX_MAX", 10000))
+    poll = max(1, cfg.get("POLL_EVERY", 5))
+
+    als = find_als()
+    if als is None:
+        print("phone-brightness: no ambient light sensor found",
+              file=sys.stderr)
+        return 1
+    print("phone-brightness: using %s (%s)" % (
+        als, open(als.rsplit("/", 1)[0] + "/name").read().strip()),
+        file=sys.stderr)
+
+    # Wake pipe: SIGUSR1 from phone-screen-toggle (screen back on) drops
+    # a byte here, interrupting the select() below for an immediate
+    # re-sample once the screen is lit again.
+    r, wfd = os.pipe()
+    os.set_blocking(wfd, False)
+    signal.set_wakeup_fd(wfd)
+
+    def _noop(_signum, _frame):
+        pass  # the byte matters, not the handler
+
+    signal.signal(signal.SIGUSR1, _noop)
+
+    ema = None
+    while True:
+        if read_brightness() <= 0:
+            # screen off: block until poked; nothing to adjust in the dark
+            select.select([r], [], [], None)
+            try:
+                os.read(r, 4096)
+            except OSError:
+                pass
+            ema = None   # resample from scratch after any pause
+            continue
+
+        lux = read_lux(als)
+        if lux is not None:
+            ema = lux if ema is None else ema + EMA_ALPHA * (lux - ema)
+            cur = read_brightness()
+            tgt = target_brightness(ema, lo, hi, lux_max)
+            if cur > 0 and abs(tgt - cur) > max(1, int(cur * DEADBAND)):
+                write_brightness(tgt)
+
+        # while lit: sample again in `poll` seconds (or sooner if poked)
+        if select.select([r], [], [], poll)[0]:
+            try:
+                os.read(r, 4096)
+            except OSError:
+                pass
+            # a poke while lit just triggers an immediate re-sample
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
