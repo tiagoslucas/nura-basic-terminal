@@ -13,11 +13,11 @@ restoring the backlight, and the signal interrupts its sleep. Cellular
 tech/signal (mmcli — the expensive fetch, it wakes ModemManager) is
 cached for MODEM_EVERY seconds; battery is a cheap sysfs read done per
 repaint. A repaint whose text is unchanged skips the framebuffer write.
-While the screen is dark the daemon sleeps in 30s chunks, reading the
-backlight only as a safety net for wakes that don't go through the
-script. Each repaint also repairs any console text that scrolled
-underneath it. Nothing is drawn within 5px of the left/right screen
-edges.
+While the screen is dark the daemon blocks on its wake pipe and costs
+nothing: the backlight has a single writer (phone-screen-toggle) which
+SIGUSR1s this daemon whenever it lights the screen again. Each repaint
+also repairs any console text that scrolled underneath it. Nothing is
+drawn within 5px of the left/right screen edges.
 """
 import gzip
 import os
@@ -61,10 +61,9 @@ def load_config(path):
 
 _cfg = load_config(CONFIG)
 
-# Battery-tunable timings (seconds); see phone-statusbar.conf. Raising
-# either value saves battery at the cost of slower updates.
+# Battery-tunable timing (seconds); see phone-statusbar.conf. Raising it
+# saves battery at the cost of a staler signal display.
 MODEM_EVERY = _cfg.get("MODEM_EVERY", 300)   # how long a mmcli result is cached
-POLL_EVERY = _cfg.get("POLL_EVERY", 30)      # safety backlight check while dark
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",
@@ -291,7 +290,9 @@ def main():
                 # wake just after the next minute boundary
                 delay = 60.0 - (time.time() % 60.0) + 0.25
             else:
-                delay = POLL_EVERY
+                # dark: block until the SIGUSR1 wake (the only writer of
+                # the backlight pokes us when it lights the screen again)
+                delay = None
             if select.select([r], [], [], delay)[0]:
                 try:
                     os.read(r, 4096)  # drain wake bytes
