@@ -1,0 +1,11 @@
+[Unit]
+Description=Phone touch gesture daemon (tmux scrollback via touchscreen)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/phone-gestures
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

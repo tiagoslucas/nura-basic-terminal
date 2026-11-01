@@ -1,0 +1,314 @@
+#!/usr/bin/python3
+"""Touch gesture daemon for the phone console.
+
+Reads the Goodix multitouch touchscreen and turns vertical drags in the
+terminal area (everything above the on-screen keyboard) into tmux
+copy-mode scrolling, giving the framebuffer console real scrollback.
+Scrolling is "natural" (content follows the finger): drag down to pull
+older output into view, drag up to return to the live bottom. A double
+tap in the terminal area injects a TAB keypress via a small uinput
+keyboard (the same mechanism buffyboard uses to type).
+
+Runs as root: needs /dev/input/event* read access, /dev/uinput, and must
+reach the user's tmux socket in /tmp/tmux-<uid>/.
+
+Usage: phone-gestures [--device /dev/input/eventN]
+  (default: find the device by EVIOCGNAME containing "goodix")
+"""
+
+import fcntl
+import glob
+import os
+import struct
+import subprocess
+import sys
+import time
+
+DEBUG = os.environ.get("PHONE_GESTURES_DEBUG") == "1"
+
+
+def dbg(fmt, *a):
+    if DEBUG:
+        print("dbg: " + (fmt % a if a else fmt), file=sys.stderr, flush=True)
+
+# --- tunables -------------------------------------------------------------
+ENTER_THRESHOLD_PX = 90    # screen px of downward drag before copy mode engages
+PX_PER_LINE = 48           # screen px of drag per scrolled line (48px font)
+FLING_MAX_MS = 400         # release faster than this + big movement = fling
+FLING_MIN_PX = 180         # minimum fling travel
+FLING_LINES = 20           # lines scrolled by a fling
+TAP_MAX_MS = 300           # a release faster than this is a tap
+TAP_SLOP_PX = 30           # ... with less than this much movement
+DOUBLE_TAP_MS = 350        # two taps closer than this = TAB
+
+SCREEN_W, SCREEN_H = 1080, 2280
+KEYBOARD_TOP = 1520        # keyboard occupies screen y >= 1520 when visible
+KEYBOARD_MARGIN = 40       # keep gestures clear of the keyboard edge
+
+# --- constants ------------------------------------------------------------
+EV_SYN, EV_KEY, EV_ABS = 0x00, 0x01, 0x03
+SYN_REPORT = 0x00
+BTN_TOUCH = 0x14A
+ABS_X, ABS_Y = 0x00, 0x01
+ABS_MT_SLOT = 0x2F
+ABS_MT_TRACKING_ID = 0x39
+ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0x35, 0x36
+
+INPUT_EVENT = struct.Struct("llHHi")   # struct input_event (64-bit time_t)
+EVENT_SIZE = INPUT_EVENT.size
+RAW_MAX = 4095.0
+
+# uinput constants (verified against the device's linux/uinput.h)
+KEY_TAB = 15
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_DEV_SETUP = 0x405C5503
+UI_DEV_CREATE = 0x5501
+UINPUT_SETUP = struct.Struct("=80s4HI")   # name, bustype/vendor/product/version
+
+tab_kb_fd = None      # uinput keyboard used to inject TAB
+last_tap = 0.0        # time of the last single tap in the terminal area
+
+
+def init_tab_keyboard():
+    """Create a one-key uinput keyboard (TAB), like buffyboard does."""
+    global tab_kb_fd
+    fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+    fcntl.ioctl(fd, UI_SET_EVBIT, 0)          # EV_SYN
+    fcntl.ioctl(fd, UI_SET_EVBIT, 1)          # EV_KEY
+    fcntl.ioctl(fd, UI_SET_KEYBIT, KEY_TAB)
+    setup = UINPUT_SETUP.pack(b"phone-gestures tab", 0x06, 0x0001,
+                              0x0002, 0x0001, 0)
+    fcntl.ioctl(fd, UI_DEV_SETUP, setup)
+    fcntl.ioctl(fd, UI_DEV_CREATE)
+    tab_kb_fd = fd
+
+
+def send_tab():
+    """Inject a TAB press/release into the console input stream."""
+    if tab_kb_fd is None:
+        return
+    try:
+        for value in (1, 0):
+            ev = INPUT_EVENT.pack(0, 0, 0x01, KEY_TAB, value)
+            os.write(tab_kb_fd, ev)
+            os.write(tab_kb_fd, INPUT_EVENT.pack(0, 0, 0x00, 0x00, 0))
+    except OSError as e:
+        dbg("TAB inject failed: %s", e)
+
+UID = 10000
+TMUX = ["tmux", "-S", "/tmp/tmux-%d/default" % UID]
+SESSION = "phone"
+
+
+def find_touchscreen():
+    """Locate the Goodix touchscreen by device name."""
+    for path in sorted(glob.glob("/dev/input/event*"),
+                       key=lambda p: int(p.rsplit("event", 1)[1])):
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            buf = bytearray(256)
+            req = (2 << 30) | (256 << 16) | (0x45 << 8) | 0x06  # EVIOCGNAME(len)
+            fcntl.ioctl(fd, req, buf, True)
+            name = bytes(buf).split(b"\0")[0].decode(errors="replace")
+        except OSError:
+            name = ""
+        if "goodix" in name.lower():
+            return fd, path, name   # keep fd open: caller reads from it
+        os.close(fd)
+    return None, None, None
+
+
+def keyboard_active():
+    """Is the on-screen keyboard currently shown? Restricts gestures to
+    the terminal area above it while it is up."""
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", "buffyboard"],
+            timeout=2).returncode == 0
+    except Exception:
+        return True  # assume present: the safer restriction
+
+
+def tmux_call(*args, capture=False):
+    """Run a tmux command against the user's server. Returns rc, or a
+    CompletedProcess when capture=True; None if tmux couldn't run."""
+    try:
+        return subprocess.run(TMUX + list(args), timeout=2,
+                              capture_output=capture)
+    except Exception:
+        return None
+
+
+def scroll_position():
+    """Lines scrolled up in copy mode, or None if not in copy mode /
+    session gone. 0 = at the live bottom."""
+    p = tmux_call("display-message", "-p", "-t", SESSION,
+                  "#{scroll_position}", capture=True)
+    try:
+        return int(p.stdout.strip())
+    except Exception:
+        return None
+
+
+class Gesture:
+    """One finger stroke on the touchscreen (slot 0 only)."""
+
+    def __init__(self, x_raw, y_raw):
+        self.x, self.y = x_raw, y_raw
+        self.t0 = time.monotonic()
+        y_screen = y_raw * SCREEN_H / (RAW_MAX + 1)
+        if keyboard_active():
+            self.valid = y_screen < KEYBOARD_TOP - KEYBOARD_MARGIN
+        else:
+            self.valid = y_screen < SCREEN_H
+        self.travel = 0.0     # signed screen px: positive = finger moved up
+        # the session may already be in copy mode from an earlier gesture:
+        # adopt its state so a drag continues from wherever it is
+        self.in_copy = scroll_position() is not None
+        self.was_live = not self.in_copy   # for double-tap TAB
+        dbg("gesture start raw=(%d,%d) y_screen=%d valid=%s in_copy=%s",
+            x_raw, y_raw, y_screen, self.valid, self.in_copy)
+
+    def enter_copy_mode(self):
+        p = tmux_call("copy-mode", "-t", SESSION)
+        if p is not None and p.returncode == 0:
+            self.in_copy = True
+        return self.in_copy
+
+    def move(self, x_raw, y_raw):
+        if not self.valid:
+            self.x, self.y = x_raw, y_raw
+            return
+        dbg("move raw=(%d,%d) travel=%.0f", x_raw, y_raw, self.travel)
+        self.travel += (self.y - y_raw) * SCREEN_H / (RAW_MAX + 1)
+        self.x, self.y = x_raw, y_raw
+
+        if not self.in_copy:
+            # a downward drag pulls older content into view
+            if self.travel < -ENTER_THRESHOLD_PX:
+                self.travel = 0.0
+                dbg("entering copy mode")
+                if not self.enter_copy_mode():
+                    dbg("copy-mode FAILED (no session?)")
+                    self.valid = False   # stop retrying this stroke
+                    return
+            else:
+                return
+
+        lines = int(self.travel / PX_PER_LINE)
+        if lines == 0:
+            return
+        self.travel -= lines * PX_PER_LINE
+        dbg("scroll %d lines (travel=%.0f)", lines, self.travel)
+        if lines < 0:
+            # finger moved down: view older lines
+            tmux_call("send-keys", "-t", SESSION, "-X",
+                      "-N", str(-lines), "scroll-up")
+        else:
+            # finger moved up: view newer lines
+            pos = scroll_position()
+            if pos is not None and pos <= 0:
+                # reached the live bottom: drop out of copy mode
+                tmux_call("send-keys", "-t", SESSION, "-X", "cancel")
+                self.in_copy = False
+            else:
+                tmux_call("send-keys", "-t", SESSION, "-X",
+                          "-N", str(lines), "scroll-down")
+
+    def release(self):
+        if not self.valid:
+            return
+        dt_ms = (time.monotonic() - self.t0) * 1000.0
+        # quick downward flick that never entered copy mode: fling
+        if (not self.in_copy and dt_ms < FLING_MAX_MS
+                and self.travel < -FLING_MIN_PX):
+            dbg("fling: dt=%.0fms travel=%.0f", dt_ms, self.travel)
+            if self.enter_copy_mode():
+                tmux_call("send-keys", "-t", SESSION, "-X",
+                          "-N", str(FLING_LINES), "scroll-up")
+            return
+        # double tap in the terminal area acts as TAB
+        if (self.was_live and abs(self.travel) < TAP_SLOP_PX
+                and dt_ms < TAP_MAX_MS):
+            global last_tap
+            now = time.monotonic()
+            if now - last_tap < DOUBLE_TAP_MS:
+                last_tap = 0.0
+                dbg("double tap -> TAB")
+                send_tab()
+            else:
+                last_tap = now
+
+
+def main():
+    args = sys.argv[1:]
+    if "--device" in args:
+        device = args[args.index("--device") + 1]
+        fd = os.open(device, os.O_RDONLY)
+        print("phone-gestures: using %s" % device, file=sys.stderr)
+    else:
+        fd, device, devname = find_touchscreen()
+        if fd is None:
+            print("phone-gestures: no Goodix touchscreen found",
+                  file=sys.stderr)
+            return 1
+        print("phone-gestures: using %s (%s)" % (device, devname),
+              file=sys.stderr)
+
+    try:
+        init_tab_keyboard()
+    except OSError as e:
+        print("phone-gestures: no uinput (%s); TAB tap disabled" % e,
+              file=sys.stderr)
+
+    slot = 0
+    pos = {0: [0, 0]}
+    touching = False
+    gesture = None
+
+    while True:
+        data = os.read(fd, EVENT_SIZE)
+        if len(data) != EVENT_SIZE:
+            continue
+        _, _, typ, code, val = INPUT_EVENT.unpack(data)
+
+        if typ == EV_ABS:
+            if code == ABS_MT_SLOT:
+                slot = val
+            elif code == ABS_MT_TRACKING_ID:
+                if val < 0:
+                    if slot == 0:
+                        if gesture:
+                            gesture.release()
+                            gesture = None
+                        touching = False
+                elif slot == 0:
+                    # gesture is created at the next SYN_REPORT, once the
+                    # position events of this touch have been parsed
+                    touching = True
+            elif code == ABS_MT_POSITION_X and slot in pos:
+                pos[slot][0] = val
+            elif code == ABS_MT_POSITION_Y and slot in pos:
+                pos[slot][1] = val
+            elif code == ABS_X:
+                pos[0][0] = val   # single-touch mirror of slot 0
+            elif code == ABS_Y:
+                pos[0][1] = val
+        elif typ == EV_KEY and code == BTN_TOUCH and val == 0:
+            if gesture:
+                gesture.release()
+                gesture = None
+            touching = False
+        elif typ == EV_SYN and code == SYN_REPORT:
+            if touching and gesture is None:
+                gesture = Gesture(pos[0][0], pos[0][1])
+            elif gesture:
+                gesture.move(pos[0][0], pos[0][1])
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
