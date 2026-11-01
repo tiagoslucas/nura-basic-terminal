@@ -56,7 +56,8 @@ What the installers do:
   the escape VT matches), restarts hkdm.
 - `install-statusbar.sh` — installs `phone-statusbar` + its systemd unit
   (enabled at boot), the `/etc/profile.d` `clear` shim, and pads `/etc/issue`
-  with two blank lines so the login prompt starts below the bar.
+  with two blank lines so the login prompt starts below the bar. Installs
+  `/etc/phone-statusbar.conf` (battery tunables) only when none exists.
 - `install-gestures.sh` — installs `phone-gestures` + its systemd unit
   (enabled at boot) and the `/etc/profile.d` hook that wraps tty1 logins
   in tmux, and drops a `~/.tmux.conf` (status line off, 5000 lines of
@@ -127,6 +128,18 @@ All the device-specific paths are constants at the top of the scripts:
   tap sensitivities, and `UID`/`TMUX`/`SESSION` for the tmux socket
 - Colors are RGB tuples near the top of `phone-statusbar`
 
+**Battery tunables** live in `/etc/phone-statusbar.conf` (template:
+`phone-statusbar.conf` in this repo) — no code edits needed, and a
+restart applies them (`doas systemctl restart phone-statusbar`):
+
+- `MODEM_EVERY` (default 300 s) — how long the mmcli result is cached.
+  Every fetch is a D-Bus round-trip that wakes ModemManager, so raising
+  this is the single biggest saver: 300 s = 288 queries/day, 900 s = 96.
+- `POLL_EVERY` (default 30 s) — dark-screen backlight safety check.
+  Raising it halves the (tiny) wakes while the screen is off.
+
+Both trade freshness for battery — see the comments in the file.
+
 **Framebuffer gotcha:** read `stride` from
 `/sys/class/graphics/fb0/stride` and trust it over `width * 4` — this
 device reports 1080×2280 @ 32bpp but a stride of **4352**, not 4320
@@ -145,7 +158,9 @@ than two terminal rows.
 - `phone-buttons.toml` — hkdm bindings
 - `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)
-- `phone-statusbar` — Python daemon; `phone-statusbar.service` — its unit
+- `phone-statusbar` — Python daemon; `phone-statusbar.service` — its unit;
+  `phone-statusbar.conf` — battery tunables, installed to
+  `/etc/phone-statusbar.conf`
 - `phone-statusbar-profile.sh` — `clear` shim installed to
   `/etc/profile.d/`, keeps the prompt below the bar
 - `phone-gestures` — Python gesture daemon; `phone-gestures.service` —

@@ -36,8 +36,35 @@ BAR_FONT = f"{FONTS}/ter-148n.psf.gz"  # 24x48, fixed regardless of console font
 BAR_H = 96                            # fixed: covers the 70px notch, 2 rows at 48px
 EDGE_MARGIN = 5                       # px unused at each screen edge
 TEXT_MARGIN = 16                      # px between screen edge and indicator text
-MODEM_EVERY = 300                      # seconds the mmcli result is cached
-POLL_EVERY = 30                        # safety backlight check while dark
+CONFIG = "/etc/phone-statusbar.conf"  # optional KEY=value overrides
+
+
+def load_config(path):
+    """Parse KEY=int lines from the config file (comments with #).
+    Missing file or malformed values fall back to the built-in defaults."""
+    cfg = {}
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return cfg
+    for line in lines:
+        line = line.split("#", 1)[0].strip()
+        key, sep, val = line.partition("=")
+        if not sep or not key.strip():
+            continue
+        try:
+            cfg[key.strip()] = int(val.strip())
+        except ValueError:
+            pass
+    return cfg
+
+
+_cfg = load_config(CONFIG)
+
+# Battery-tunable timings (seconds); see phone-statusbar.conf. Raising
+# either value saves battery at the cost of slower updates.
+MODEM_EVERY = _cfg.get("MODEM_EVERY", 300)   # how long a mmcli result is cached
+POLL_EVERY = _cfg.get("POLL_EVERY", 30)      # safety backlight check while dark
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",

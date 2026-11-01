@@ -9,6 +9,10 @@ install -m 755 "$SRC/phone-statusbar" /usr/local/bin/
 install -m 755 "$SRC/phone-font" /usr/local/bin/  # now also records font-px
 install -m 644 "$SRC/phone-statusbar.service" /etc/systemd/system/
 install -m 644 "$SRC/phone-statusbar-profile.sh" /etc/profile.d/phone-statusbar.sh
+# tunables (battery timing) — never overwrite an already-tuned config
+if [ ! -f /etc/phone-statusbar.conf ]; then
+    install -m 644 "$SRC/phone-statusbar.conf" /etc/phone-statusbar.conf
+fi
 # regenerated font: unicode table endianness fix (accents were broken)
 install -m 644 "$SRC/ter-148n.psf.gz" /usr/share/consolefonts/
 setfont -C /dev/tty1 /usr/share/consolefonts/ter-148n.psf.gz
