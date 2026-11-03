@@ -84,8 +84,7 @@ def write_psf2(scaled_glyphs, table, width, height):
     charsize = rowsize * height
     out = bytearray()
     out += bytes([0x72, 0xB5, 0x4A, 0x86])
-    out += struct.pack("<IIIIII", 0, 32, 1, nglyphs, charsize, height, width)[:0] \
-        if False else struct.pack("<IIIIIII", 0, 32, 1, nglyphs, charsize, height, width)
+    out += struct.pack("<IIIIIII", 0, 32, 1, nglyphs, charsize, height, width)
     for g in scaled_glyphs:
         assert sum(len(r) for r in g) == charsize
         out += b"".join(g)
