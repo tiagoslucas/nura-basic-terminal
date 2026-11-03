@@ -7,7 +7,8 @@ copy-mode scrolling, giving the framebuffer console real scrollback.
 Scrolling is "natural" (content follows the finger): drag down to pull
 older output into view, drag up to return to the live bottom. A double
 tap in the terminal area injects a TAB keypress via a small uinput
-keyboard (the same mechanism buffyboard uses to type).
+keyboard (the same mechanism buffyboard uses to type) -- but only while
+the tmux session is up, so it can never reach a login prompt.
 
 Runs as root: needs /dev/input/event* read access, /dev/uinput, and must
 reach the user's tmux socket in /tmp/tmux-<uid>/.
@@ -56,7 +57,25 @@ ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0x35, 0x36
 
 INPUT_EVENT = struct.Struct("llHHi")   # struct input_event (64-bit time_t)
 EVENT_SIZE = INPUT_EVENT.size
-RAW_MAX = 4095.0
+
+
+def to_screen_y(y_raw):
+    """Raw ABS_MT_POSITION_Y -> screen pixels.
+
+    The Goodix driver on this device advertises an ABS range of 0..4095 in
+    its EVIOCGABS info, but the values it actually reports are already screen
+    pixels (0..2279). Verified by matching touches against the buffyboard key
+    each one activates: a tap reported as y=1778 produced "t", and the q-row
+    of the keyboard starts at screen y=1672.
+
+    This used to divide by the advertised 4096, which shrank every touch by
+    ~0.56: taps on the on-screen keyboard (y >= 1520) were seen at y ~ 850-
+    1270, i.e. inside the terminal gesture zone. Two letters typed within
+    DOUBLE_TAP_MS then counted as a double tap and injected a TAB into the
+    console, so agetty rejected the login name ("invalid character 0x9 in
+    login name") and logging in from the keyboard was impossible.
+    """
+    return float(y_raw)
 
 # uinput constants (verified against the device's linux/uinput.h)
 KEY_TAB = 15
@@ -85,8 +104,21 @@ def init_tab_keyboard():
 
 
 def send_tab():
-    """Inject a TAB press/release into the console input stream."""
+    """Inject a TAB press/release into the console input stream.
+
+    Only while the phone tmux session is actually running. TAB is meant for
+    shell completion inside that session, and there is no way to aim it
+    anywhere else: it goes to whatever owns tty1. At a login prompt that is
+    agetty, which rejects the whole login name on any control character
+    ("invalid character 0x9 in login name") and exits, so a stray double tap
+    there made logging in from the on-screen keyboard impossible. The scroll
+    gestures already no-op without a session; this makes TAB behave the same.
+    """
     if tab_kb_fd is None:
+        return
+    p = tmux_call("has-session", "-t", SESSION, capture=True)
+    if p is None or p.returncode != 0:
+        dbg("no '%s' tmux session; TAB suppressed", SESSION)
         return
     try:
         for value in (1, 0):
@@ -160,7 +192,7 @@ class Gesture:
     def __init__(self, x_raw, y_raw):
         self.x, self.y = x_raw, y_raw
         self.t0 = time.monotonic()
-        y_screen = y_raw * SCREEN_H / (RAW_MAX + 1)
+        y_screen = to_screen_y(y_raw)
         if keyboard_active():
             self.valid = y_screen < KEYBOARD_TOP - KEYBOARD_MARGIN
         else:
@@ -184,7 +216,7 @@ class Gesture:
             self.x, self.y = x_raw, y_raw
             return
         dbg("move raw=(%d,%d) travel=%.0f", x_raw, y_raw, self.travel)
-        self.travel += (self.y - y_raw) * SCREEN_H / (RAW_MAX + 1)
+        self.travel += to_screen_y(self.y) - to_screen_y(y_raw)
         self.x, self.y = x_raw, y_raw
 
         if not self.in_copy:
