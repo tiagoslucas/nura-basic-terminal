@@ -113,6 +113,9 @@ reboot, which is usually what you want on a phone).
 **Big font** (`scale-psf.py`): Terminus tops out at 32 px, so
 `ter-148n.psf.gz` is ter-116n scaled 3× to 24×48. Regenerate with
 `python3 scale-psf.py /usr/share/consolefonts/ter-116n.psf.gz ter-148n.psf.gz 3`.
+`python3 test-scale-psf.py` self-checks that pipeline: it scales a tiny
+PSF1 font and loads the result with the status bar's own font loader,
+asserting the unicode table and the scaled pixels.
 Gotchas handled: PSF1 unicode tables are little-endian u16 with 0xFFFF
 terminators / 0xFFFE sequence separators and contain UTF-16 surrogate
 pairs; PSF2 wants UTF-8 values with 0xFF/0xFE markers.
@@ -129,7 +132,10 @@ The bar is a **fixed** height with its own fixed 24×48 font, so it never
 moves when you change the console font. Values (battery from
 `/sys/class/power_supply/*/capacity|status`, cellular from `mmcli -m any`,
 clock from `strftime`) are fetched only once per repaint — so the clock
-lags at most one repaint behind.
+lags at most one repaint behind. A failed modem query (ModemManager not
+up yet at boot) is not cached: it retries at the next repaint, so the
+bar recovers within a minute instead of showing NO NET for the whole
+`MODEM_EVERY` window.
 
 **Gestures** (`phone-gestures`): fbcon has no scrollback, so tty1 logins
 are wrapped in tmux (a `/etc/profile.d` hook execs `tmux new-session -A -s
@@ -278,7 +284,8 @@ than two terminal rows.
   double tap: `synthtouch dtap x y`). Coordinates are screen pixels, like
   the real Goodix reports: the device advertises a 0–4095 ABS range to
   match the hardware, but values are passed through unscaled.
-- `scale-psf.py` — PSF1 → PSF2 integer font scaler
+- `scale-psf.py` — PSF1 → PSF2 integer font scaler;
+  `test-scale-psf.py` — its round-trip self-check
 - `ter-116n.psf.gz` — pristine source font (copy of stock Terminus);
   `ter-148n.psf.gz` — the generated 24×48 result
 
