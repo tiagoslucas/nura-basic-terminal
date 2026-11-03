@@ -4,8 +4,11 @@
 #   doas sh /tmp/basic-terminal/install-brightness.sh
 set -e
 SRC=/tmp/basic-terminal
+. "$SRC/backup-helper.sh"
 
+backup /usr/local/bin/phone-brightness "$SRC/phone-brightness"
 install -m 755 "$SRC/phone-brightness" /usr/local/bin/
+backup /etc/systemd/system/phone-brightness.service "$SRC/phone-brightness.service"
 install -m 644 "$SRC/phone-brightness.service" /etc/systemd/system/
 # tunables — never overwrite an already-tuned config
 if [ ! -f /etc/phone-brightness.conf ]; then

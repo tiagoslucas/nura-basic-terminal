@@ -5,32 +5,7 @@
 set -e
 SRC=/tmp/basic-terminal
 
-# backup <installed> <incoming>: keep a timestamped copy of a file this
-# installer is about to overwrite, in the device home's backup folder, so a
-# bad deploy can be rolled back by hand. These scripts get reinstalled often,
-# so a copy is only worth keeping when the file actually changes -- an
-# identical reinstall backs up nothing -- and only the BACKUP_KEEP newest
-# copies of each file are kept, so the folder can't grow without bound.
-BACKUP_DIR=${BACKUP_DIR:-$(set -- /home/*; echo "${1:-/root}")/backup}
-BACKUP_KEEP=${BACKUP_KEEP:-2}
-
-backup() {
-    [ -e "$1" ] || return 0
-    # unchanged: nothing worth keeping. An `if` rather than `cmp ... && return`
-    # because under `set -e` a differing cmp would abort the whole installer.
-    if cmp -s "$1" "$2"; then return 0; fi
-    base=$(basename "$1")
-    mkdir -p "$BACKUP_DIR"
-    cp -a "$1" "$BACKUP_DIR/$base.$(date +%Y%m%d-%H%M%S)"
-    chown "$(stat -c %U "$(dirname "$BACKUP_DIR")")" "$BACKUP_DIR" 2>/dev/null || true
-    # drop the oldest copies beyond BACKUP_KEEP. Sort by the timestamp in the
-    # name, not mtime: cp -a preserves the original's mtime, so a reinstall of
-    # an older build would otherwise look like the newest backup.
-    n=$(ls -1 "$BACKUP_DIR/$base".* 2>/dev/null | wc -l)
-    [ "$n" -gt "$BACKUP_KEEP" ] || return 0
-    ls -1 "$BACKUP_DIR/$base".* 2>/dev/null | sort | head -n "$((n - BACKUP_KEEP))" \
-        | while read -r old; do rm -f "$old"; done
-}
+. "$SRC/backup-helper.sh"
 
 apk add tmux 2>/dev/null || true
 

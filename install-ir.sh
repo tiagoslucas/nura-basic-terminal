@@ -5,9 +5,17 @@
 # Needs a C compiler and the kernel UAPI headers (apk add build-base linux-headers).
 set -e
 SRC=/tmp/basic-terminal
+. "$SRC/backup-helper.sh"
 
-cc -O2 -o /usr/local/bin/irsend "$SRC/irsend.c"
-chmod 755 /usr/local/bin/irsend
+# Compile to a temp file rather than straight over /usr/local/bin/irsend: a
+# cc that fails halfway would otherwise leave a truncated binary installed,
+# and the backup needs something to compare the installed one against.
+TMPBIN=$(mktemp)
+trap 'rm -f "$TMPBIN"' EXIT
+cc -O2 -o "$TMPBIN" "$SRC/irsend.c"
+backup /usr/local/bin/irsend "$TMPBIN"
+install -m 755 "$TMPBIN" /usr/local/bin/irsend
+backup /usr/local/bin/phone-ir "$SRC/phone-ir"
 install -m 755 "$SRC/phone-ir" /usr/local/bin/
 mkdir -p /etc/phone-ir
 # codes — never overwrite an already-edited remotes file

@@ -69,14 +69,22 @@ What the installers do:
   in tmux, and drops a `~/.tmux.conf` (status line off, 5000 lines of
   history) where none exists. Takes effect at the next tty1 login.
 
-When an installer overwrites a file **that actually changed**, the old
-version is copied, timestamped, into `<device home>/backup` (e.g.
-`/home/tiagol/backup/phone-gestures.20261103-115600`), so a bad deploy can be
-rolled back by hand. Reinstalling an identical file backs up nothing, and
-only the 2 newest copies of each file are kept — these scripts are
-reinstalled often and the folder shouldn't grow without bound. Tune with
-`BACKUP_KEEP=` (how many to keep) and `BACKUP_DIR=` (where). Hand-edits made
-directly on the device should land there too.
+All five installers source `backup-helper.sh`. When one overwrites a file
+**that actually changed**, the old version is copied, timestamped, into
+`<device home>/backup` (e.g. `/home/tiagol/backup/phone-gestures.20261103-115600`),
+so a bad deploy can be rolled back by hand. Reinstalling an identical file
+backs up nothing, and only the 2 newest copies of each file are kept — these
+scripts are reinstalled often and the folder shouldn't grow without bound.
+Tune with `BACKUP_KEEP=` (how many to keep) and `BACKUP_DIR=` (where).
+Hand-edits made directly on the device should land there too.
+
+`backup <installed> [incoming]` — with `incoming` it skips identical files;
+with one argument the backup is unconditional, for files edited in place
+(`/etc/vconsole.conf`, `/etc/conf.d/ttyescape.conf`), where the caller first
+checks whether the edit would change anything. `install-ir.sh` compiles
+`irsend` to a temp file before installing it, so there is something to
+compare against — and so a failed `cc` can't leave a truncated binary in
+`/usr/local/bin`.
 - `install-brightness.sh` — installs `phone-brightness` + its systemd
   unit (enabled at boot) and `/etc/phone-brightness.conf` (when none
   exists). `phone-screen-toggle` pokes it awake on screen-on.
@@ -242,8 +250,10 @@ than two terminal rows.
 ## Files
 
 - `install.sh`, `install-statusbar.sh`, `install-gestures.sh`,
-  `install-brightness.sh` — root installers (run from
+  `install-brightness.sh`, `install-ir.sh` — root installers (run from
   `/tmp/basic-terminal` on the device)
+- `backup-helper.sh` — sourced by every installer; keeps timestamped copies
+  of replaced files in `<device home>/backup` (changed files only, 2 newest)
 - `phone-buttons.toml` — hkdm bindings
 - `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)
