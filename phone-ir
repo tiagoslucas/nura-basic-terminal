@@ -249,4 +249,9 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ValueError:
+        # a bad number on the command line (nec 0xzz ...): usage, not a traceback
+        print("phone-ir: bad number", file=sys.stderr)
+        sys.exit(2)

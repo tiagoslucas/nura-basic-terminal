@@ -80,6 +80,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: irsend [-f hz] [-d pct] [-g gpio] MARK SPACE ...\n");
 		return 2;
 	}
+	if (carrier <= 0) {
+		fprintf(stderr, "irsend: carrier must be > 0\n");
+		return 2;
+	}
 
 	chip = open("/dev/gpiochip0", O_RDWR);
 	if (chip < 0) {
