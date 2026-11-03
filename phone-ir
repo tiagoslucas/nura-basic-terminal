@@ -1,0 +1,252 @@
+#!/usr/bin/python3
+"""Send IR commands with the phone's IR blaster.
+
+The blaster is an LED on SPI6's MOSI line (GPIO 20), powered by the l8
+regulator (always on here — the SD slot shares it). Stock Android drives
+it through the downstream `peel_ir` SPI driver, which mainline lacks, so
+this frees the pins from the spi_qup controller, bit-bangs the carrier
+with the irsend helper (real-time, SCHED_FIFO), then rebinds the controller.
+
+  phone-ir test                      5 s of 100 ms bursts (aim a camera at it)
+  phone-ir nec ADDR CMD [REPEATS]    NEC, e.g.  phone-ir nec 0x00 0x45
+  phone-ir raw MARK SPACE ...        raw timings in microseconds
+  phone-ir send NAME [REPEATS]       a named code from /etc/phone-ir/remotes.conf
+  phone-ir list                      the names in that file
+  options before the subcommand:  -f HZ carrier (38000)  -d PCT duty (33)
+
+Run as root (doas phone-ir ...); `list` works for anyone.
+
+remotes.conf: one definition per line, `NAME = KIND ARGS...`. A name that
+appears on several lines sends all of them, one after another.
+  nec ADDR CMD         samsung ADDR CMD      sirc ADDR CMD (Sony, 12-bit)
+  necext ADDR16 CMD    rc5 ADDR CMD          raw CARRIER_HZ DUTY_PCT MARK SPACE ...
+  ref OTHER_NAME       send another name's codes
+"""
+import fcntl
+import os
+import subprocess
+import sys
+import time
+
+CONTROLLER = "7af6000.spi"
+SPI_QUP = "/sys/bus/platform/drivers/spi_qup"
+IRSEND = "/usr/local/bin/irsend"
+LOCK = "/run/phone-ir.lock"
+TOGGLE = "/run/phone-ir.toggle"
+REMOTES = "/etc/phone-ir/remotes.conf"
+GAP_S = 0.15    # pause between the codes of a multi-code name
+
+
+def bits_lsb(value, n):
+    return [(value >> i) & 1 for i in range(n)]
+
+
+def bits_msb(value, n):
+    return [(value >> i) & 1 for i in reversed(range(n))]
+
+
+def pulse_distance(header, bits, mark, one, zero):
+    """Header, then `mark + space` per bit (space length codes the bit), stop mark."""
+    t = list(header)
+    for b in bits:
+        t += [mark, one if b else zero]
+    t.append(mark)
+    return t
+
+
+def nec_frame(addr, cmd):
+    """NEC: 9 ms mark, 4.5 ms space, 32 bits LSB first, stop mark."""
+    bits = (bits_lsb(addr, 8) + bits_lsb(addr ^ 0xFF, 8) +
+            bits_lsb(cmd, 8) + bits_lsb(cmd ^ 0xFF, 8))
+    return pulse_distance((9000, 4500), bits, 560, 1690, 560)
+
+
+def necext_frame(addr16, cmd):
+    """NEC with a 16-bit address (no complement byte)."""
+    bits = (bits_lsb(addr16 & 0xFF, 8) + bits_lsb(addr16 >> 8, 8) +
+            bits_lsb(cmd, 8) + bits_lsb(cmd ^ 0xFF, 8))
+    return pulse_distance((9000, 4500), bits, 560, 1690, 560)
+
+
+def samsung_frame(addr, cmd):
+    """Samsung32: 4.5 ms header, address twice, command + complement."""
+    bits = (bits_lsb(addr, 8) + bits_lsb(addr, 8) +
+            bits_lsb(cmd, 8) + bits_lsb(cmd ^ 0xFF, 8))
+    return pulse_distance((4500, 4500), bits, 560, 1690, 560)
+
+
+def sirc_frames(addr, cmd):
+    """Sony SIRC, 12 bit (7 command + 5 address), 40 kHz, sent 3 times."""
+    t = [2400, 600]
+    for b in bits_lsb(cmd, 7) + bits_lsb(addr, 5):
+        t += [1200 if b else 600, 600]
+    t.pop()                       # no space after the last bit
+    gap = 45000 - sum(t)          # frames start 45 ms apart
+    return t + [gap] + t + [gap] + t
+
+
+def rc5_frame(addr, cmd, toggle):
+    """Philips RC5 (36 kHz, Manchester, 889 us half-bits)."""
+    bits = ([1, 1 ^ ((cmd >> 6) & 1), toggle] + bits_msb(addr, 5) +
+            bits_msb(cmd & 63, 6))
+    levels = []
+    for b in bits:
+        levels += [0, 1] if b else [1, 0]      # 1 = space then mark
+    runs = []
+    for lv in levels:
+        if runs and runs[-1][0] == lv:
+            runs[-1][1] += 1
+        else:
+            runs.append([lv, 1])
+    if runs[0][0] == 0:
+        runs.pop(0)               # the leading idle space is not sent
+    return [n * 889 for _, n in runs]
+
+
+def nec_timings(addr, cmd, repeats):
+    t = nec_frame(addr, cmd)
+    t.append(40000)    # gap to the first repeat (frame is ~67.5 ms of 108)
+    for _ in range(repeats):
+        t += [9000, 2250, 560, 96000]   # NEC repeat code
+    return t[:-1] if t[-1] else t
+
+
+def next_toggle():
+    """RC5 toggle bit: flips on every press, like a real remote."""
+    try:
+        bit = int(open(TOGGLE).read()) ^ 1
+    except (OSError, ValueError):
+        bit = 0
+    try:
+        open(TOGGLE, "w").write(str(bit))
+    except OSError:
+        pass
+    return bit
+
+
+def load_remotes(path=REMOTES):
+    """NAME = KIND ARGS... ; repeated names accumulate -> {name: [words, ...]}."""
+    codes = {}
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return codes
+    for line in lines:
+        name, sep, defn = line.split("#", 1)[0].partition("=")
+        if sep and name.strip() and defn.split():
+            codes.setdefault(name.strip(), []).append(defn.split())
+    return codes
+
+
+def code_items(words, repeats):
+    """One definition -> [(timings, carrier or None, duty or None)]."""
+    kind = words[0]
+    num = lambda w: int(w, 0)
+    if kind == "nec" and len(words) == 3:
+        return [(nec_timings(num(words[1]), num(words[2]), repeats), None, None)]
+    if kind == "necext" and len(words) == 3:
+        return [(necext_frame(num(words[1]), num(words[2])), None, None)]
+    if kind == "samsung" and len(words) == 3:
+        return [(samsung_frame(num(words[1]), num(words[2])), None, None)]
+    if kind == "sirc" and len(words) == 3:
+        return [(sirc_frames(num(words[1]), num(words[2])), 40000, 33)]
+    if kind == "rc5" and len(words) == 3:
+        return [(rc5_frame(num(words[1]), num(words[2]), next_toggle()),
+                 36000, 33)]
+    if kind == "raw" and len(words) > 4:
+        return [([int(w) for w in words[3:]], int(words[1]), int(words[2]))]
+    raise ValueError("bad definition: %s" % " ".join(words[:4]))
+
+
+def resolve(codes, name, repeats, depth=0):
+    if name not in codes:
+        raise ValueError("no code named %r (try: phone-ir list)" % name)
+    if depth > 4:
+        raise ValueError("ref loop at %r" % name)
+    items = []
+    for words in codes[name]:
+        if words[0] == "ref" and len(words) == 2:
+            items += resolve(codes, words[1], repeats, depth + 1)
+        else:
+            items += code_items(words, repeats)
+    return items
+
+
+def bind(action):
+    try:
+        with open("%s/%s" % (SPI_QUP, action), "w") as f:
+            f.write(CONTROLLER)
+    except OSError:
+        pass   # already in that state
+
+
+def transmit(items, carrier, duty):
+    """Send every (timings, carrier, duty) in turn, freeing the pins once."""
+    rc = 0
+    bind("unbind")
+    try:
+        for i, (timings, c, d) in enumerate(items):
+            if i:
+                time.sleep(GAP_S)
+            cmd = [IRSEND, "-f", str(c or carrier), "-d", str(d or duty)]
+            cmd += [str(int(t)) for t in timings]
+            rc = subprocess.call(cmd) or rc
+    finally:
+        bind("bind")   # always give the SPI controller back
+    return rc
+
+
+def main(argv):
+    carrier, duty = 38000, 33
+    while argv and argv[0] in ("-f", "-d"):
+        if len(argv) < 2:
+            break
+        if argv[0] == "-f":
+            carrier = int(argv[1])
+        else:
+            duty = int(argv[1])
+        argv = argv[2:]
+    if argv[:1] == ["list"]:
+        for name, defs in sorted(load_remotes().items()):
+            first = " ".join(defs[0][:3])
+            print("%-14s %s" % (name, first if len(defs) == 1
+                                else "%d codes, first: %s" % (len(defs), first)))
+        return 0
+    if not argv or os.geteuid() != 0:
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    lock = open(LOCK, "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+
+    mode, args = argv[0], argv[1:]
+    if mode == "test":
+        timings = []
+        for _ in range(25):     # 25 x (100 ms on, 100 ms off) = 5 s
+            timings += [100000, 100000]
+        timings.pop()
+        items = [(timings, None, None)]
+    elif mode == "nec" and len(args) in (2, 3):
+        items = [(nec_timings(int(args[0], 0), int(args[1], 0),
+                              int(args[2]) if len(args) == 3 else 0),
+                  None, None)]
+    elif mode == "raw" and len(args) >= 1:
+        items = [([int(a) for a in args], None, None)]
+    elif mode == "send" and len(args) in (1, 2):
+        try:
+            items = resolve(load_remotes(), args[0],
+                            int(args[1]) if len(args) == 2 else 0)
+        except ValueError as e:
+            print("phone-ir: %s" % e, file=sys.stderr)
+            return 1
+        if len(items) > 1:
+            print("phone-ir: sending %d codes for %s" % (len(items), args[0]),
+                  file=sys.stderr)
+    else:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return transmit(items, carrier, duty)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
