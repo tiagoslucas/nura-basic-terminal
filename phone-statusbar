@@ -253,7 +253,10 @@ def main():
                 try:
                     if now - net_age >= MODEM_EVERY:
                         net = read_modem()   # wakes ModemManager: cache it
-                        net_age = now
+                        # cache real answers only: a failed read (modem
+                        # not up yet) retries at the next minute, not in 5
+                        if net != (None, None):
+                            net_age = now
                     cap, status = read_battery()
 
                     tech, sig = net
