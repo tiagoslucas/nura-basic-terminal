@@ -69,10 +69,14 @@ What the installers do:
   in tmux, and drops a `~/.tmux.conf` (status line off, 5000 lines of
   history) where none exists. Takes effect at the next tty1 login.
 
-Anything an installer overwrites is first copied, timestamped, into
-`<device home>/backup` (e.g. `/home/tiagol/backup/phone-gestures.20261103-115600`),
-so a bad deploy can be rolled back by hand. Set `BACKUP_DIR=` to put them
-elsewhere. Hand-edits made directly on the device should go there too.
+When an installer overwrites a file **that actually changed**, the old
+version is copied, timestamped, into `<device home>/backup` (e.g.
+`/home/tiagol/backup/phone-gestures.20261103-115600`), so a bad deploy can be
+rolled back by hand. Reinstalling an identical file backs up nothing, and
+only the 2 newest copies of each file are kept — these scripts are
+reinstalled often and the folder shouldn't grow without bound. Tune with
+`BACKUP_KEEP=` (how many to keep) and `BACKUP_DIR=` (where). Hand-edits made
+directly on the device should land there too.
 - `install-brightness.sh` — installs `phone-brightness` + its systemd
   unit (enabled at boot) and `/etc/phone-brightness.conf` (when none
   exists). `phone-screen-toggle` pokes it awake on screen-on.
