@@ -233,6 +233,8 @@ so it never darkens an already-lit screen), and writes
 that file and shows a green `RING` (or `CALL`) on the left, poked awake
 with SIGUSR1 on every transition so it appears the moment the phone
 rings. Terminated call objects are deleted so the list stays clean.
+While the call rings, `call-watcher` also arms the call audio routing
+(see below), or the call would connect silent.
 The volume buttons go through `phone-volume` while a call rings:
 **volume-up answers, volume-down silences the ringer** (a flag file the
 ring loop checks — the call itself keeps ringing, and volume-up still
@@ -240,6 +242,19 @@ answers it); with no call ringing they fall through to `phone-font` as
 before. Voice control over MM needs a polkit rule
 (`49-modem-voice.rules` → `/etc/polkit-1/rules.d/`) — messaging is
 allowed by distro defaults, voice is not.
+
+**Call audio routing**: the voice call itself never passes through
+Linux (q6voiced just opens the hostless VoiceMMode1 PCM, and the DSP
+routes the audio), so a call is only audible along paths connected when
+the session starts. `call-watcher` therefore sets, while the call still
+rings: the mic uplink route + gains (`ADC1`/`TX1` — stock levels are far
+too quiet), and the earpiece downlink — the voice mixer plus the
+codec-internal route from the UCM `EarpieceEnableSeq`, which nothing
+applies during a call (PulseAudio's UCM verb would own the mixers, but
+it tears them down when its sinks suspend). The earpiece codec route is
+released again when the call ends. Known limitation: the **loudspeaker**
+(QUIN MI2S backend) stays silent during calls even with its voice mixer
+enabled — the fix for that lives in the DSP route setup, not userspace.
 
 ```sh
 call +351925628044      # dial
@@ -340,7 +355,7 @@ than two terminal rows.
   `/usr/local/bin/`; `call`, `sms-send` — call control and SMS sending
   CLIs, installed to the device user's `~/.local/bin/`; `call-watcher` —
   Python call-event daemon; `call-watcher.service` — its **user** unit;
-  `ring.wav` — the 425 Hz ring tone it loops (installed to
+  `ring.wav` — the soft two-note chime ringtone it loops (installed to
   `~/.local/share/ring.wav`); `49-modem-voice.rules` — polkit rule
   granting the device user voice access over ModemManager, installed to
   `/etc/polkit-1/rules.d/`

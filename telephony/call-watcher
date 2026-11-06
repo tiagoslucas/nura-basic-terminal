@@ -19,8 +19,10 @@ MM_NAME = "org.freedesktop.ModemManager1"
 RING_WAV = os.path.expanduser("~/.local/share/ring.wav")
 STATE_FILE = "/tmp/phone-call-state"
 SCREEN_OFF_FLAG = "/run/phone-buttons/screen-off"
-# volume-down while ringing touches this to silence the ringer; the call
-# keeps ringing. A new incoming call clears it.
+# volume-down while ringing writes "1" here to silence the ringer; the
+# call keeps ringing. Content-based on purpose: phone-volume runs as
+# root and could not create files here we'd be allowed to delete (sticky
+# /tmp), so we own the file and both sides only write its contents.
 MUTE_FLAG = "/tmp/call-ring-muted"
 
 # /org/.../Modem/0: org.freedesktop.ModemManager1.Modem.Voice.CallAdded (objectpath '/org/.../Call/0')
@@ -31,6 +33,48 @@ VOICE_RE = re.compile(
 STATE_RE = re.compile(
     r"^(/org/\S+/Call/\d+):\s+org\.freedesktop\.ModemManager1\.Call\.StateChanged")
 LIST_RE = re.compile(r"(\S+/Call/\d+)\s+(incoming|outgoing)\s+\((\S+)\)")
+
+# Call audio routing. q6voiced only opens the hostless VoiceMMode1 PCM;
+# the DSP routes the call itself, but only along paths that are connected
+# when the session starts — so these must be set while the call still
+# rings, before q6voiced reacts to the call going active. The UCM verb
+# owns the two FE<->BE mixers but PulseAudio tears them down when its
+# sinks suspend, and nobody applies the codec-internal earpiece route
+# (the UCM EarpieceEnableSeq) during a call at all. Gains: the stock
+# ADC1/TX1 levels are far too quiet on this device.
+VOICE_CSETS = [
+    # uplink: mic route + gains
+    ("VoiceMMode1 Capture Mixer TERT_MI2S_TX", "1"),
+    ("DEC1 MUX", "ADC1"),
+    ("CIC1 MUX", "AMIC"),
+    ("ADC1 Volume", "8"),
+    ("TX1 Digital Volume", "96"),
+    # downlink: earpiece — voice mixer + codec route + gain
+    ("PRI_MI2S_RX Voice Mixer VoiceMMode1", "1"),
+    ("RX1 MIX1 INP1", "RX1"),
+    ("RDAC2 MUX", "RX1"),
+    ("EAR_S", "Switch"),
+    ("RX1 Digital Volume", "100"),
+]
+VOICE_RESTORE = [
+    ("EAR_S", "ZERO"),
+    ("RX1 MIX1 INP1", "ZERO"),
+]
+
+
+def amixer(name, value):
+    subprocess.run(["sudo", "-n", "amixer", "-c", "0", "cset",
+                    f"name={name}", value], capture_output=True)
+
+
+def arm_voice_routes():
+    for name, value in VOICE_CSETS:
+        amixer(name, value)
+
+
+def restore_voice_routes():
+    for name, value in VOICE_RESTORE:
+        amixer(name, value)
 
 
 def log(msg):
@@ -70,6 +114,17 @@ def wake_screen():
                         "--do-toggle"], capture_output=True)
 
 
+def set_muted(value):
+    """Own the mute flag and write its content; never unlink it (a
+    root-owned leftover in sticky /tmp is what crash-looped this daemon
+    once). Failing to reset it is logged, never fatal."""
+    try:
+        with open(MUTE_FLAG, "w") as f:
+            f.write("1" if value else "0")
+    except OSError as e:
+        log(f"could not reset {MUTE_FLAG}: {e}")
+
+
 class Ringer:
     """Loops ring.wav on the default sink while a call is ringing."""
 
@@ -79,14 +134,11 @@ class Ringer:
     def start(self):
         # no -q: this paplay build rejects it (that's why ringing was silent)
         if self.proc is None and os.path.exists(RING_WAV):
-            try:
-                os.unlink(MUTE_FLAG)  # a new ring is audible again
-            except FileNotFoundError:
-                pass
+            set_muted(False)  # a new ring is audible again
             self.proc = subprocess.Popen(
                 ["sh", "-c",
                  "while :; do "
-                 f"[ -e {MUTE_FLAG} ] && {{ sleep 1; continue; }}; "
+                 f"[ \"$(cat {MUTE_FLAG} 2>/dev/null)\" = 1 ] && {{ sleep 1; continue; }}; "
                  f"paplay --volume=25000 '{RING_WAV}'; sleep 2; done"])
 
     def stop(self):
@@ -106,6 +158,11 @@ def reconcile(ringer, seen_states):
             continue
         number = number_of(path)
         seen_states[path] = state
+        # route call audio before q6voiced opens the voice session; the
+        # re-arm at active covers outgoing calls, where q6voiced opens
+        # the PCM already at dialing, possibly before we got here
+        if state != "terminated" and (old is None or state == "active"):
+            arm_voice_routes()
         if state == "ringing-in":
             log(f"incoming call from {number}")
             ringer.start()
@@ -140,6 +197,8 @@ def reconcile(ringer, seen_states):
         if old[1] == "ringing-in":
             ringer.stop()
         log(f"call object {path} gone")
+    if not seen_states:
+        restore_voice_routes()
 
 
 def main():
@@ -148,11 +207,11 @@ def main():
     # a leftover state file from a previous daemon run would pin a stale
     # RING/CALL in the status bar forever, and a stale mute flag would
     # silence the next ring
-    for stale in (STATE_FILE, MUTE_FLAG):
-        try:
-            os.unlink(stale)
-        except FileNotFoundError:
-            pass
+    try:
+        os.unlink(STATE_FILE)
+    except FileNotFoundError:
+        pass
+    set_muted(False)
     log("watching calls")
     while True:
         proc = subprocess.Popen(
