@@ -9,20 +9,20 @@ SRC=/tmp/basic-terminal
 
 apk add tmux 2>/dev/null || true
 
-backup /usr/local/bin/phone-gestures "$SRC/phone-gestures"
-install -m 755 "$SRC/phone-gestures" /usr/local/bin/
-backup /etc/systemd/system/phone-gestures.service "$SRC/phone-gestures.service"
-install -m 644 "$SRC/phone-gestures.service" /etc/systemd/system/
+backup /usr/local/bin/phone-gestures "$SRC/gestures/phone-gestures"
+install -m 755 "$SRC/gestures/phone-gestures" /usr/local/bin/
+backup /etc/systemd/system/phone-gestures.service "$SRC/gestures/phone-gestures.service"
+install -m 644 "$SRC/gestures/phone-gestures.service" /etc/systemd/system/
 # tty1 logins get wrapped in tmux (session "phone"); other shells untouched
-backup /etc/profile.d/phone-gestures.sh "$SRC/phone-gestures-profile.sh"
-install -m 644 "$SRC/phone-gestures-profile.sh" /etc/profile.d/phone-gestures.sh
+backup /etc/profile.d/phone-gestures.sh "$SRC/gestures/phone-gestures-profile.sh"
+install -m 644 "$SRC/gestures/phone-gestures-profile.sh" /etc/profile.d/phone-gestures.sh
 
 # tmux config for the console session (no status line, deep history);
 # only installed when the user has none — never clobber an existing one
 for home in /root /home/*; do
     [ -d "$home" ] || continue
     if [ ! -f "$home/.tmux.conf" ]; then
-        install -m 644 "$SRC/phone-tmux.conf" "$home/.tmux.conf"
+        install -m 644 "$SRC/gestures/phone-tmux.conf" "$home/.tmux.conf"
         chown "$(stat -c %U "$home")" "$home/.tmux.conf" 2>/dev/null || true
     fi
 done

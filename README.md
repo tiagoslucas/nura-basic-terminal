@@ -121,10 +121,10 @@ ignores volume presses within 2 s of a power press.
 `/run/phone-buttons/font-index` (volatile — resets to the biggest after a
 reboot, which is usually what you want on a phone).
 
-**Big font** (`scale-psf.py`): Terminus tops out at 32 px, so
-`ter-148n.psf.gz` is ter-116n scaled 3× to 24×48. Regenerate with
-`python3 scale-psf.py /usr/share/consolefonts/ter-116n.psf.gz ter-148n.psf.gz 3`.
-`python3 test-scale-psf.py` self-checks that pipeline: it scales a tiny
+**Big font** (`fonts/scale-psf.py`): Terminus tops out at 32 px, so
+`fonts/ter-148n.psf.gz` is ter-116n scaled 3× to 24×48. Regenerate with
+`python3 fonts/scale-psf.py /usr/share/consolefonts/ter-116n.psf.gz fonts/ter-148n.psf.gz 3`.
+`python3 fonts/test-scale-psf.py` self-checks that pipeline: it scales a tiny
 PSF1 font and loads the result with the status bar's own font loader,
 asserting the unicode table and the scaled pixels.
 Gotchas handled: PSF1 unicode tables are little-endian u16 with 0xFFFF
@@ -268,7 +268,7 @@ All the device-specific paths are constants at the top of the scripts:
 - Colors are RGB tuples near the top of `phone-statusbar`
 
 **Battery tunables** live in `/etc/phone-statusbar.conf` (template:
-`phone-statusbar.conf` in this repo) — no code edits needed, and a
+`statusbar/phone-statusbar.conf` in this repo) — no code edits needed, and a
 restart applies them (`doas systemctl restart phone-statusbar`):
 
 - `MODEM_EVERY` (default 300 s) — how long the mmcli result is cached.
@@ -280,13 +280,13 @@ the screen is dark the daemon doesn't poll at all: the backlight has a
 single writer (`phone-screen-toggle`) which SIGUSR1s it on wake.
 
 **Backlight tunables** live in `/etc/phone-brightness.conf` (template:
-`phone-brightness.conf`): `MIN_BRIGHTNESS` (dark-room level),
+`brightness/phone-brightness.conf`): `MIN_BRIGHTNESS` (dark-room level),
 `MAX_BRIGHTNESS`, `LUX_MAX` (ambient light that maps to the max), and
 `POLL_EVERY` (sample interval while lit — raising it saves battery at
 the cost of reacting slower when you move between rooms).
 
 **IR codes** live in `/etc/phone-ir/remotes.conf` (template:
-`phone-ir-remotes.conf`): `NAME = nec 0x04 0x08`, `samsung`, `sirc`, `rc5`,
+`ir/phone-ir-remotes.conf`): `NAME = nec 0x04 0x08`, `samsung`, `sirc`, `rc5`,
 `necext`, `raw CARRIER DUTY MARK SPACE ...` or `ref OTHER_NAME`. A name on
 several lines sends all of them in turn, 150 ms apart (`GAP_S` in
 `phone-ir`). The format is documented in the template.
@@ -309,42 +309,42 @@ than two terminal rows.
   root installers (run from `/tmp/basic-terminal` on the device)
 - `backup-helper.sh` — sourced by every installer; keeps timestamped copies
   of replaced files in `<device home>/backup` (changed files only, 2 newest)
-- `phone-buttons.toml` — hkdm bindings
-- `phone-screen-toggle`, `phone-font` — shell scripts (installed to
+- `buttons/` — `phone-buttons.toml` (hkdm bindings);
+  `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)
-- `phone-statusbar` — Python daemon; `phone-statusbar.service` — its unit;
-  `phone-statusbar.conf` — battery tunables, installed to
-  `/etc/phone-statusbar.conf`
-- `phone-statusbar-profile.sh` — `clear` shim installed to
+- `statusbar/` — `phone-statusbar` — Python daemon;
+  `phone-statusbar.service` — its unit; `phone-statusbar.conf` — battery
+  tunables, installed to `/etc/phone-statusbar.conf`;
+  `phone-statusbar-profile.sh` — `clear` shim installed to
   `/etc/profile.d/`, keeps the prompt below the bar
-- `phone-gestures` — Python gesture daemon; `phone-gestures.service` —
-  its unit; `phone-gestures-profile.sh` — the tty1 tmux hook installed to
-  `/etc/profile.d/`; `phone-tmux.conf` — the tmux config it drops in
-  `~/.tmux.conf`
-- `phone-brightness` — Python adaptive-backlight daemon;
+- `gestures/` — `phone-gestures` — Python gesture daemon;
+  `phone-gestures.service` — its unit; `phone-gestures-profile.sh` — the
+  tty1 tmux hook installed to `/etc/profile.d/`; `phone-tmux.conf` — the
+  tmux config it drops in `~/.tmux.conf`; `synthtouch.c` — synthetic
+  uinput touchscreen for testing the gestures without touching the real
+  screen (drag: `synthtouch x0 y0 x1 y1 [ms]`, double tap:
+  `synthtouch dtap x y`). Coordinates are screen pixels, like the real
+  Goodix reports: the device advertises a 0–4095 ABS range to match the
+  hardware, but values are passed through unscaled.
+- `brightness/` — `phone-brightness` — Python adaptive-backlight daemon;
   `phone-brightness.service` — its unit; `phone-brightness.conf` — its
   tunables, installed to `/etc/phone-brightness.conf`
-- `phone-ir` — Python IR sender (protocol encoders, named codes);
+- `ir/` — `phone-ir` — Python IR sender (protocol encoders, named codes);
   `irsend.c` — the real-time carrier generator it calls (built by the
   installer); `phone-ir-remotes.conf` — example codes, installed to
-  `/etc/phone-ir/remotes.conf`; `install-ir.sh` — its installer
-- `phone-volume` — volume-button dispatcher (answer / mute ringer while
-  ringing, font size otherwise), installed to `/usr/local/bin/`
-- `call`, `sms-send` — call control and SMS sending CLIs, installed to
-  the device user's `~/.local/bin/`
-- `call-watcher` — Python call-event daemon; `call-watcher.service` —
-  its **user** unit; `ring.wav` — the 425 Hz ring tone it loops
-  (installed to `~/.local/share/ring.wav`)
-- `49-modem-voice.rules` — polkit rule granting the device user voice
-  access over ModemManager, installed to `/etc/polkit-1/rules.d/`
-- `synthtouch.c` — synthetic uinput touchscreen for testing the gestures
-  without touching the real screen (drag: `synthtouch x0 y0 x1 y1 [ms]`,
-  double tap: `synthtouch dtap x y`). Coordinates are screen pixels, like
-  the real Goodix reports: the device advertises a 0–4095 ABS range to
-  match the hardware, but values are passed through unscaled.
-- `scale-psf.py` — PSF1 → PSF2 integer font scaler;
-  `test-scale-psf.py` — its round-trip self-check
-- `ter-116n.psf.gz` — pristine source font (copy of stock Terminus);
+  `/etc/phone-ir/remotes.conf`
+- `telephony/` — `phone-volume` — volume-button dispatcher (answer /
+  mute ringer while ringing, font size otherwise), installed to
+  `/usr/local/bin/`; `call`, `sms-send` — call control and SMS sending
+  CLIs, installed to the device user's `~/.local/bin/`; `call-watcher` —
+  Python call-event daemon; `call-watcher.service` — its **user** unit;
+  `ring.wav` — the 425 Hz ring tone it loops (installed to
+  `~/.local/share/ring.wav`); `49-modem-voice.rules` — polkit rule
+  granting the device user voice access over ModemManager, installed to
+  `/etc/polkit-1/rules.d/`
+- `fonts/` — `scale-psf.py` — PSF1 → PSF2 integer font scaler;
+  `test-scale-psf.py` — its round-trip self-check;
+  `ter-116n.psf.gz` — pristine source font (copy of stock Terminus);
   `ter-148n.psf.gz` — the generated 24×48 result
 
 ## License
