@@ -6,7 +6,7 @@
 set -e
 SRC=/tmp/basic-terminal
 
-for i in buttons statusbar gestures brightness ir telephony; do
+for i in buttons statusbar gestures brightness ir telephony notify; do
     echo "== install-$i =="
     sh "$SRC/install-$i.sh"
 done

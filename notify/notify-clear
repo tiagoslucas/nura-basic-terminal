@@ -1,0 +1,9 @@
+#!/bin/sh
+# Dismiss missed-call / unread-SMS notifications; the LED goes dark.
+D="$HOME/.local/state/notify-led"
+if [ -e "$D/missed" ] || [ -e "$D/sms" ]; then
+    rm -f "$D/missed" "$D/sms"
+    echo "notifications cleared"
+else
+    echo "nothing to clear"
+fi

@@ -1,0 +1,10 @@
+[Unit]
+Description=Notification LED: blink for ringing/active/missed calls and unread SMS
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/bin/notify-led
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
