@@ -18,7 +18,10 @@ ringing*)
         [ -n "$path" ] && mmcli -o "$path" --accept
         ;;
     down)
-        touch "$MUTE"
+        # content, not create/delete: we run as root, and a root-owned
+        # file in sticky /tmp could never be reset by the user-run
+        # call-watcher. call-watcher pre-creates this file as the user.
+        echo 1 > "$MUTE"
         ;;
     esac
     exit 0
