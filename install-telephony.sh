@@ -16,42 +16,42 @@ USER_ID=$(id -u "$USER_NAME")
 # is allowed by distro defaults; voice is not). polkit picks up rules
 # files on its own. NOTE: the rule names a specific user — edit it if
 # your device user differs.
-backup /etc/polkit-1/rules.d/49-modem-voice.rules "$SRC/49-modem-voice.rules"
-install -m 644 "$SRC/49-modem-voice.rules" /etc/polkit-1/rules.d/
+backup /etc/polkit-1/rules.d/49-modem-voice.rules "$SRC/telephony/49-modem-voice.rules"
+install -m 644 "$SRC/telephony/49-modem-voice.rules" /etc/polkit-1/rules.d/
 
 # Volume buttons: answer / silence-the-ringer while a call rings,
 # console font size otherwise. hkdm is restarted further down.
-backup /etc/hkdm/config.d/phone-buttons.toml "$SRC/phone-buttons.toml"
-install -m 644 "$SRC/phone-buttons.toml" /etc/hkdm/config.d/
-backup /usr/local/bin/phone-volume "$SRC/phone-volume"
-install -m 755 "$SRC/phone-volume" /usr/local/bin/
+backup /etc/hkdm/config.d/phone-buttons.toml "$SRC/buttons/phone-buttons.toml"
+install -m 644 "$SRC/buttons/phone-buttons.toml" /etc/hkdm/config.d/
+backup /usr/local/bin/phone-volume "$SRC/telephony/phone-volume"
+install -m 755 "$SRC/telephony/phone-volume" /usr/local/bin/
 
 # Status bar with the RING/CALL indicator
-backup /usr/local/bin/phone-statusbar "$SRC/phone-statusbar"
-install -m 755 "$SRC/phone-statusbar" /usr/local/bin/
+backup /usr/local/bin/phone-statusbar "$SRC/statusbar/phone-statusbar"
+install -m 755 "$SRC/statusbar/phone-statusbar" /usr/local/bin/
 
 # Per-user tools + ring tone
 BIN="$USER_HOME/.local/bin"
 mkdir -p "$BIN" "$USER_HOME/.local/share" "$USER_HOME/.config/systemd/user"
-for f in call sms-send call-watcher; do
-    backup "$BIN/$f" "$SRC/$f"
-    install -m 755 -o "$USER_NAME" -g "$USER_NAME" "$SRC/$f" "$BIN/"
+for f in call sms-send call-watcher; do  # telephony/
+    backup "$BIN/$f" "$SRC/telephony/$f"
+    install -m 755 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/$f" "$BIN/"
 done
 # an earlier deploy installed the watcher as call-watcher.py
-if [ -e "$BIN/call-watcher.py" ] && cmp -s "$BIN/call-watcher.py" "$SRC/call-watcher"; then
+if [ -e "$BIN/call-watcher.py" ] && cmp -s "$BIN/call-watcher.py" "$SRC/telephony/call-watcher"; then
     rm -f "$BIN/call-watcher.py"
 elif [ -e "$BIN/call-watcher.py" ]; then
     backup "$BIN/call-watcher.py"
     rm -f "$BIN/call-watcher.py"
 fi
-install -m 644 -o "$USER_NAME" -g "$USER_NAME" "$SRC/ring.wav" \
+install -m 644 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/ring.wav" \
     "$USER_HOME/.local/share/ring.wav"
 
 # User-level service: run enable/restart as the phone user
 USVC="XDG_RUNTIME_DIR=/run/user/$USER_ID systemctl --user"
 backup "$USER_HOME/.config/systemd/user/call-watcher.service" \
-    "$SRC/call-watcher.service"
-install -m 644 -o "$USER_NAME" -g "$USER_NAME" "$SRC/call-watcher.service" \
+    "$SRC/telephony/call-watcher.service"
+install -m 644 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/call-watcher.service" \
     "$USER_HOME/.config/systemd/user/"
 
 systemctl restart hkdm

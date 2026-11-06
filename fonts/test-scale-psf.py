@@ -29,7 +29,8 @@ def module(filename, name):
 
 
 scale = module("scale-psf.py", "scale_psf")
-Font = module("phone-statusbar", "phone_statusbar").Font
+Font = module(os.path.join(HERE, "..", "statusbar", "phone-statusbar"),
+              "phone_statusbar").Font
 
 # glyph index -> 8 rows; TABLE: glyph index -> unicode entries (UTF-16 units)
 A_ROWS = [0b00100100, 0b01000010, 0b11100111, 0b10000001,

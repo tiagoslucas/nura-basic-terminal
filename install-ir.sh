@@ -12,14 +12,14 @@ SRC=/tmp/basic-terminal
 # and the backup needs something to compare the installed one against.
 TMPBIN=$(mktemp)
 trap 'rm -f "$TMPBIN"' EXIT
-cc -O2 -o "$TMPBIN" "$SRC/irsend.c"
+cc -O2 -o "$TMPBIN" "$SRC/ir/irsend.c"
 backup /usr/local/bin/irsend "$TMPBIN"
 install -m 755 "$TMPBIN" /usr/local/bin/irsend
-backup /usr/local/bin/phone-ir "$SRC/phone-ir"
-install -m 755 "$SRC/phone-ir" /usr/local/bin/
+backup /usr/local/bin/phone-ir "$SRC/ir/phone-ir"
+install -m 755 "$SRC/ir/phone-ir" /usr/local/bin/
 mkdir -p /etc/phone-ir
 # codes — never overwrite an already-edited remotes file
 if [ ! -f /etc/phone-ir/remotes.conf ]; then
-    install -m 644 "$SRC/phone-ir-remotes.conf" /etc/phone-ir/remotes.conf
+    install -m 644 "$SRC/ir/phone-ir-remotes.conf" /etc/phone-ir/remotes.conf
 fi
 echo "IR INSTALL DONE"

@@ -8,13 +8,13 @@ SRC=/tmp/basic-terminal
 
 FONTPATH=/usr/share/consolefonts/ter-148n.psf.gz
 
-backup /usr/share/consolefonts/ter-148n.psf.gz "$SRC/ter-148n.psf.gz"
-install -m 644 "$SRC/ter-148n.psf.gz" /usr/share/consolefonts/
-backup /usr/local/bin/phone-screen-toggle "$SRC/phone-screen-toggle"
-backup /usr/local/bin/phone-font "$SRC/phone-font"
-install -m 755 "$SRC/phone-screen-toggle" "$SRC/phone-font" /usr/local/bin/
-backup /etc/hkdm/config.d/phone-buttons.toml "$SRC/phone-buttons.toml"
-install -m 644 -o root -g root "$SRC/phone-buttons.toml" /etc/hkdm/config.d/
+backup /usr/share/consolefonts/ter-148n.psf.gz "$SRC/fonts/ter-148n.psf.gz"
+install -m 644 "$SRC/fonts/ter-148n.psf.gz" /usr/share/consolefonts/
+backup /usr/local/bin/phone-screen-toggle "$SRC/buttons/phone-screen-toggle"
+backup /usr/local/bin/phone-font "$SRC/buttons/phone-font"
+install -m 755 "$SRC/buttons/phone-screen-toggle" "$SRC/buttons/phone-font" /usr/local/bin/
+backup /etc/hkdm/config.d/phone-buttons.toml "$SRC/buttons/phone-buttons.toml"
+install -m 644 -o root -g root "$SRC/buttons/phone-buttons.toml" /etc/hkdm/config.d/
 
 # Boot default font = the tripled 48px one. These two are edited in place, so
 # back them up only when the edit would actually change the FONT= line.

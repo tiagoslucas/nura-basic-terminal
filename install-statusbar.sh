@@ -6,21 +6,21 @@ set -e
 SRC=/tmp/basic-terminal
 . "$SRC/backup-helper.sh"
 
-backup /usr/local/bin/phone-statusbar "$SRC/phone-statusbar"
-install -m 755 "$SRC/phone-statusbar" /usr/local/bin/
-backup /usr/local/bin/phone-font "$SRC/phone-font"
-install -m 755 "$SRC/phone-font" /usr/local/bin/  # now also records font-px
-backup /etc/systemd/system/phone-statusbar.service "$SRC/phone-statusbar.service"
-install -m 644 "$SRC/phone-statusbar.service" /etc/systemd/system/
-backup /etc/profile.d/phone-statusbar.sh "$SRC/phone-statusbar-profile.sh"
-install -m 644 "$SRC/phone-statusbar-profile.sh" /etc/profile.d/phone-statusbar.sh
+backup /usr/local/bin/phone-statusbar "$SRC/statusbar/phone-statusbar"
+install -m 755 "$SRC/statusbar/phone-statusbar" /usr/local/bin/
+backup /usr/local/bin/phone-font "$SRC/buttons/phone-font"
+install -m 755 "$SRC/buttons/phone-font" /usr/local/bin/  # now also records font-px
+backup /etc/systemd/system/phone-statusbar.service "$SRC/statusbar/phone-statusbar.service"
+install -m 644 "$SRC/statusbar/phone-statusbar.service" /etc/systemd/system/
+backup /etc/profile.d/phone-statusbar.sh "$SRC/statusbar/phone-statusbar-profile.sh"
+install -m 644 "$SRC/statusbar/phone-statusbar-profile.sh" /etc/profile.d/phone-statusbar.sh
 # tunables (battery timing) — never overwrite an already-tuned config
 if [ ! -f /etc/phone-statusbar.conf ]; then
-    install -m 644 "$SRC/phone-statusbar.conf" /etc/phone-statusbar.conf
+    install -m 644 "$SRC/statusbar/phone-statusbar.conf" /etc/phone-statusbar.conf
 fi
 # regenerated font: unicode table endianness fix (accents were broken)
-backup /usr/share/consolefonts/ter-148n.psf.gz "$SRC/ter-148n.psf.gz"
-install -m 644 "$SRC/ter-148n.psf.gz" /usr/share/consolefonts/
+backup /usr/share/consolefonts/ter-148n.psf.gz "$SRC/fonts/ter-148n.psf.gz"
+install -m 644 "$SRC/fonts/ter-148n.psf.gz" /usr/share/consolefonts/
 setfont -C /dev/tty1 /usr/share/consolefonts/ter-148n.psf.gz
 
 # Pad the login prompt below the status bar (2 blank lines in /etc/issue)
