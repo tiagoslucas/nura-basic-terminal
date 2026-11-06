@@ -1,0 +1,191 @@
+#!/usr/bin/python3
+"""Drive the white notification LED from telephony events:
+
+  ringing     fast blink    an incoming call is ringing
+  active      steady on     a call is in progress
+  missed      slow blink    a call rang out unanswered — until `notify-clear`
+  unread SMS  double blink  an SMS arrived — until `notify-clear`
+
+Runs as a user service next to call-watcher, but is self-contained: it
+watches ModemManager itself, so it works without the telephony component.
+Missed-call detection must not depend on listing call objects (call-watcher
+deletes terminated ones quickly), so a CallDeleted for a call that was
+ringing and never answered also counts as missed. The missed/SMS flags are
+files in ~/.local/state/notify-led/ — they survive daemon restarts and
+reboots, and `notify-clear` dismisses them.
+
+The LED is /sys/class/leds/white:indicator; the udev rule installed with
+this component makes its brightness file user-writable. daisy has a single
+white diode (one channel of the aw2013), so patterns are brightness-only.
+"""
+import os
+import re
+import subprocess
+import threading
+import time
+
+MM_NAME = "org.freedesktop.ModemManager1"
+LED = "/sys/class/leds/white:indicator/brightness"
+STATE_DIR = os.path.expanduser("~/.local/state/notify-led")
+MISSED_FLAG = os.path.join(STATE_DIR, "missed")
+SMS_FLAG = os.path.join(STATE_DIR, "sms")
+
+VOICE_RE = re.compile(
+    r"^(/org/\S+):\s+org\.freedesktop\.ModemManager1\.Modem\.Voice\."
+    r"(CallAdded|CallDeleted)\s+\(\s*objectpath\s+'(?P<path>/org/[^']+)'")
+STATE_RE = re.compile(
+    r"^(/org/\S+/Call/\d+):\s+org\.freedesktop\.ModemManager1\.Call\.StateChanged")
+# /org/.../Modem/0: org...Modem.Messaging.Added (objectpath '/org/.../Sms/0', true)
+ADDED_RE = re.compile(
+    r"^(?P<modem>/org/\S+):\s+org\.freedesktop\.ModemManager1\.Modem\.Messaging\."
+    r"Added\s+\(\s*objectpath\s+'(?P<sms>/org/[^']+)',\s*"
+    r"(?P<received>true|false)\s*\)")
+LIST_RE = re.compile(r"(\S+/Call/\d+)\s+(incoming|outgoing)\s+\((\S+)\)")
+
+# period (ms) and the [start, end) windows within it where the LED is on
+PATTERNS = {
+    "ringing": (200, [(0, 100)]),
+    "active": (1000, [(0, 1000)]),
+    "missed": (1000, [(0, 400)]),
+    "sms": (1000, [(0, 100), (200, 300)]),
+}
+
+
+def log(msg):
+    print(time.strftime("[%Y-%m-%d %H:%M:%S]"), msg, flush=True)
+
+
+class Tracker:
+    """Call states as this daemon sees them, plus the missed-call flag."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.calls = {}  # path -> {"state": str, "incoming": bool, "answered": bool}
+
+    def update(self, path, direction, state):
+        with self.lock:
+            e = self.calls.setdefault(
+                path, {"state": None, "incoming": None, "answered": False})
+            if direction:
+                e["incoming"] = direction == "incoming"
+            if state == "active":
+                e["answered"] = True
+            e["state"] = state
+            if state == "terminated":
+                del self.calls[path]
+                self._ended(e)
+
+    def deleted(self, path):
+        # call-watcher deletes terminated calls quickly, so this is often
+        # the only place we learn an incoming call ended unanswered
+        with self.lock:
+            e = self.calls.pop(path, None)
+            if e:
+                self._ended(e)
+
+    def _ended(self, e):
+        if e["incoming"] and not e["answered"]:
+            self.set_flag(MISSED_FLAG)
+            log("missed call")
+
+    def set_flag(self, flag):
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(flag, "w") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
+        except OSError as e:
+            log(f"could not set {flag}: {e}")
+
+    def reset(self):
+        with self.lock:
+            self.calls.clear()
+
+    def live_states(self):
+        with self.lock:
+            return [e["state"] for e in self.calls.values()
+                    if e["state"] not in (None, "terminated", "unknown")]
+
+
+def reconcile(tracker):
+    """Refresh call states from ModemManager (mirror of call-watcher)."""
+    r = subprocess.run(["mmcli", "-m", "any", "--voice-list-calls"],
+                       capture_output=True, text=True)
+    for path, direction, state in LIST_RE.findall(r.stdout):
+        tracker.update(path, direction, state)
+
+
+def watch_modem(tracker):
+    """Reader thread: keep a gdbus monitor running and feed the tracker."""
+    while True:
+        proc = subprocess.Popen(
+            ["gdbus", "monitor", "--system", "--dest", MM_NAME],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                m = ADDED_RE.match(line)
+                if m and m.group("received") == "true":
+                    # received=true: an incoming SMS; false = one we sent
+                    tracker.set_flag(SMS_FLAG)
+                    log("sms received")
+                    continue
+                if VOICE_RE.match(line) or STATE_RE.match(line):
+                    # let ModemManager settle, then re-list like call-watcher
+                    time.sleep(0.3)
+                    reconcile(tracker)
+        finally:
+            proc.terminate()
+        rc = proc.wait()
+        # the monitor restarted: old call paths may be gone for good
+        tracker.reset()
+        log(f"gdbus monitor exited (rc={rc}), restarting in 5s")
+        time.sleep(5)
+
+
+def led_write(on):
+    try:
+        with open(LED, "w") as f:
+            f.write("255" if on else "0")
+    except OSError:
+        pass  # LED absent or not writable: keep tracking flags anyway
+
+
+def current_mode(tracker):
+    states = tracker.live_states()
+    if "ringing-in" in states:
+        return "ringing"
+    if states:  # active, dialing, ringing-out: any live call
+        return "active"
+    if os.path.exists(MISSED_FLAG):
+        return "missed"
+    if os.path.exists(SMS_FLAG):
+        return "sms"
+    return None
+
+
+def main():
+    tracker = Tracker()
+    os.makedirs(STATE_DIR, exist_ok=True)
+    reconcile(tracker)  # adopt a call already up when we start
+    threading.Thread(target=watch_modem, args=(tracker,), daemon=True).start()
+    log("watching modem, driving " + LED)
+    last = None
+    try:
+        while True:
+            mode = current_mode(tracker)
+            on = False
+            if mode:
+                period, windows = PATTERNS[mode]
+                phase = int(time.monotonic() * 1000) % period
+                on = any(a <= phase < b for a, b in windows)
+            if on != last:
+                led_write(on)
+                last = on
+            time.sleep(0.05 if mode else 0.5)
+    finally:
+        led_write(False)
+
+
+if __name__ == "__main__":
+    main()
