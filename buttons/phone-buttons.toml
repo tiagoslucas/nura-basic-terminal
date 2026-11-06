@@ -1,8 +1,10 @@
-# Power button: toggle screen (and keyboard visibility) without logging out.
-# Volume buttons: while a call rings, up answers and down silences the
-# ringer; otherwise console font size (see /usr/local/bin/phone-volume).
-# ttyescape's vol-down + power combo is preserved by guards inside the
-# scripts (see /usr/local/bin/phone-*).
+# Power button: toggle screen (and keyboard visibility) without logging
+# out. Volume buttons: console font size.
+# The ttyescape vol-down + power combo is preserved by guards inside the
+# scripts. Telephony can bind the volume buttons too (its own
+# phone-telephony.toml) — hkdm runs every matching binding, and
+# phone-font stands down while a call is ringing or active.
+
 [[events]]
 name = "screen toggle"
 event_type = "EV_KEY"
@@ -11,15 +13,15 @@ keys = ["KEY_POWER"]
 command = "/usr/local/bin/phone-screen-toggle"
 
 [[events]]
-name = "volume up (answer while ringing)"
+name = "volume up"
 event_type = "EV_KEY"
 key_state = "released"
 keys = ["KEY_VOLUMEUP"]
-command = "/usr/local/bin/phone-volume up"
+command = "/usr/local/bin/phone-font up"
 
 [[events]]
-name = "volume down (mute ringer while ringing)"
+name = "volume down"
 event_type = "EV_KEY"
 key_state = "released"
 keys = ["KEY_VOLUMEDOWN"]
-command = "/usr/local/bin/phone-volume down"
+command = "/usr/local/bin/phone-font down"

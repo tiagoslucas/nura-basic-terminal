@@ -1,0 +1,20 @@
+# Telephony volume buttons: while a call rings, up answers and down
+# silences the ringer; during a call they set the call (earpiece) volume.
+# Own file on purpose: the buttons install ships phone-buttons.toml
+# binding the same keys to phone-font, and hkdm runs every matching
+# binding — phone-font stands down while a call is ringing or active, so
+# either component can be installed without the other.
+
+[[events]]
+name = "volume up (answer while ringing)"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_VOLUMEUP"]
+command = "/usr/local/bin/phone-volume up"
+
+[[events]]
+name = "volume down (silence ringer / call volume)"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_VOLUMEDOWN"]
+command = "/usr/local/bin/phone-volume down"

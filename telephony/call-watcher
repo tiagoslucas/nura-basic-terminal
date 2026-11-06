@@ -20,10 +20,11 @@ RING_WAV = os.path.expanduser("~/.local/share/ring.wav")
 STATE_FILE = "/tmp/phone-call-state"
 SCREEN_OFF_FLAG = "/run/phone-buttons/screen-off"
 # volume-down while ringing writes "1" here to silence the ringer; the
-# call keeps ringing. Content-based on purpose: phone-volume runs as
-# root and could not create files here we'd be allowed to delete (sticky
-# /tmp), so we own the file and both sides only write its contents.
-MUTE_FLAG = "/tmp/call-ring-muted"
+# call keeps ringing. In ~/.local/state, not /tmp: phone-volume runs as
+# root, and in sticky /tmp fs.protected_regular blocks root from writing
+# a file we own — while we could never delete one root created.
+STATE_DIR = os.path.expanduser("~/.local/state")
+MUTE_FLAG = os.path.join(STATE_DIR, "call-ring-muted")
 
 # /org/.../Modem/0: org.freedesktop.ModemManager1.Modem.Voice.CallAdded (objectpath '/org/.../Call/0')
 VOICE_RE = re.compile(
@@ -115,9 +116,8 @@ def wake_screen():
 
 
 def set_muted(value):
-    """Own the mute flag and write its content; never unlink it (a
-    root-owned leftover in sticky /tmp is what crash-looped this daemon
-    once). Failing to reset it is logged, never fatal."""
+    """Write the mute flag's content; never unlink it. Failing to reset
+    it is logged, never fatal."""
     try:
         with open(MUTE_FLAG, "w") as f:
             f.write("1" if value else "0")
@@ -139,7 +139,7 @@ class Ringer:
                 ["sh", "-c",
                  "while :; do "
                  f"[ \"$(cat {MUTE_FLAG} 2>/dev/null)\" = 1 ] && {{ sleep 1; continue; }}; "
-                 f"paplay --volume=25000 '{RING_WAV}'; sleep 2; done"])
+                 f"paplay --volume=40000 '{RING_WAV}'; sleep 2; done"])
 
     def stop(self):
         if self.proc is not None:
@@ -204,6 +204,7 @@ def reconcile(ringer, seen_states):
 def main():
     ringer = Ringer()
     seen_states = {}
+    os.makedirs(STATE_DIR, exist_ok=True)
     # a leftover state file from a previous daemon run would pin a stale
     # RING/CALL in the status bar forever, and a stale mute flag would
     # silence the next ring

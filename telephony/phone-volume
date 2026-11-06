@@ -1,12 +1,17 @@
 #!/bin/sh
-# Volume buttons, dispatched by hkdm.
-#   while a call is ringing:  up = answer it, down = silence the ringer
-#                             (the call itself keeps ringing)
-#   otherwise:                console font size, as before
-# Ringing state comes from call-watcher's /tmp/phone-call-state, which is
-# written the moment a call starts ringing.
+# Telephony volume buttons, dispatched by hkdm (phone-telephony.toml;
+# hkdm also runs the phone-font binding from the buttons install, which
+# stands down while a call is up).
+#   while a call rings:  up = answer it, down = silence the ringer
+#                        (the call itself keeps ringing)
+#   during a call:       up/down = call (earpiece) volume
+# Call state comes from call-watcher's /tmp/phone-call-state, written the
+# moment a call starts ringing.
 STATE=/tmp/phone-call-state
-MUTE=/tmp/call-ring-muted
+# In the device user's home, not /tmp: we run as root, and in sticky /tmp
+# fs.protected_regular blocks us from writing a file the user-run
+# call-watcher owns (while the watcher could never delete one we create).
+MUTE=$(set -- /home/*; echo "${1:-/root}")/.local/state/call-ring-muted
 
 case "$(cat "$STATE" 2>/dev/null)" in
 ringing*)
@@ -18,14 +23,25 @@ ringing*)
         [ -n "$path" ] && mmcli -o "$path" --accept
         ;;
     down)
-        # content, not create/delete: we run as root, and a root-owned
-        # file in sticky /tmp could never be reset by the user-run
-        # call-watcher. call-watcher pre-creates this file as the user.
         echo 1 > "$MUTE"
         ;;
     esac
-    exit 0
+    ;;
+active*)
+    # in-call volume: step the earpiece (RX1) digital gain (0-124)
+    case "$1" in
+    up|down)
+        V=$(amixer -c 0 cget name='RX1 Digital Volume' 2>/dev/null \
+           | sed -n 's/.*: values=\([0-9]*\).*/\1/p')
+        [ -n "$V" ] || exit 0
+        [ "$1" = up ] && V=$((V + 8)) || V=$((V - 8))
+        [ "$V" -gt 124 ] && V=124
+        [ "$V" -lt 0 ] && V=0
+        amixer -c 0 cset name='RX1 Digital Volume' "$V" >/dev/null
+        ;;
+    esac
     ;;
 esac
 
-exec /usr/local/bin/phone-font "$1"
+# idle presses belong to the buttons install (phone-font): nothing to do
+exit 0
