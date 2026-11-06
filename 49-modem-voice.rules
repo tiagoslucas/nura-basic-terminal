@@ -1,0 +1,8 @@
+// Allow user tiagol to control voice calls via ModemManager
+// (messaging is already allowed by the distro defaults; voice is not).
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.ModemManager1.Voice" &&
+        subject.user == "tiagol") {
+        return polkit.Result.YES;
+    }
+});

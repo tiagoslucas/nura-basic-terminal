@@ -37,6 +37,7 @@ BAR_H = 96                            # fixed: covers the 70px notch, 2 rows at 
 EDGE_MARGIN = 5                       # px unused at each screen edge
 TEXT_MARGIN = 16                      # px between screen edge and indicator text
 CONFIG = "/etc/phone-statusbar.conf"  # optional KEY=value overrides
+CALL_STATE = "/tmp/phone-call-state"  # "<state> <number>" from call-watcher
 
 
 def load_config(path):
@@ -194,6 +195,17 @@ def read_battery():
         return None, ""
 
 
+def read_call_state():
+    """Return ("ringing"|"active"|None, number) from the call-watcher."""
+    try:
+        parts = open(CALL_STATE).read().split(None, 1)
+        if parts and parts[0] in ("ringing", "active"):
+            return parts[0], (parts[1].strip() if len(parts) > 1 else "?")
+    except OSError:
+        pass
+    return None, ""
+
+
 def read_modem():
     try:
         out = subprocess.run(["mmcli", "-m", "any", "-K"],
@@ -253,10 +265,7 @@ def main():
                 try:
                     if now - net_age >= MODEM_EVERY:
                         net = read_modem()   # wakes ModemManager: cache it
-                        # cache real answers only: a failed read (modem
-                        # not up yet) retries at the next minute, not in 5
-                        if net != (None, None):
-                            net_age = now
+                        net_age = now
                     cap, status = read_battery()
 
                     tech, sig = net
@@ -266,6 +275,15 @@ def main():
                         lrgb = WHITE if (sig is None or sig >= 15) else RED
                     else:
                         left, lrgb = "NO NET", RED
+
+                    # incoming/ongoing call indicator (call-watcher pokes
+                    # us with SIGUSR1 on every transition, so this shows
+                    # up the moment the phone starts ringing)
+                    cstate, cnum = read_call_state()
+                    if cstate == "ringing":
+                        left, lrgb = f"RING {cnum} {left}", GREEN
+                    elif cstate == "active":
+                        left = f"CALL {cnum} {left}"
 
                     if cap is None:
                         right, rrgb = "?BAT", RED
