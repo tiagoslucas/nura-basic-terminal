@@ -52,17 +52,18 @@ Copy this directory to the phone (e.g. `scp -r . phone:/tmp/basic-terminal`),
 then on the phone as a sudoer:
 
 ```sh
-doas sh /tmp/basic-terminal/install.sh            # buttons + fonts
-doas sh /tmp/basic-terminal/install-statusbar.sh  # status bar
-doas sh /tmp/basic-terminal/install-gestures.sh   # touch scrolling + TAB
-doas sh /tmp/basic-terminal/install-brightness.sh # adaptive backlight
-doas sh /tmp/basic-terminal/install-ir.sh         # IR blaster
-doas sh /tmp/basic-terminal/install-telephony.sh  # SMS + calls
+doas sh /tmp/basic-terminal/install.sh            # everything
 ```
+
+Or install one piece at a time: `install-buttons.sh` (buttons + fonts),
+`install-statusbar.sh`, `install-gestures.sh`, `install-brightness.sh`,
+`install-ir.sh`, `install-telephony.sh`.
 
 What the installers do:
 
-- `install.sh` — installs the font + `phone-screen-toggle` + `phone-font`,
+- `install.sh` — meta-installer; runs every component installer below
+  in order.
+- `install-buttons.sh` — installs the font + `phone-screen-toggle` + `phone-font`,
   drops `phone-buttons.toml` into `/etc/hkdm/config.d/`, sets the boot font
   via `FONT=` in `/etc/vconsole.conf` (and `/etc/conf.d/ttyescape.conf` so
   the escape VT matches), restarts hkdm.
@@ -304,7 +305,8 @@ than two terminal rows.
 
 ## Files
 
-- `install.sh`, `install-statusbar.sh`, `install-gestures.sh`,
+- `install.sh` — meta-installer running all of the below
+- `install-buttons.sh`, `install-statusbar.sh`, `install-gestures.sh`,
   `install-brightness.sh`, `install-ir.sh`, `install-telephony.sh` —
   root installers (run from `/tmp/basic-terminal` on the device)
 - `backup-helper.sh` — sourced by every installer; keeps timestamped copies
