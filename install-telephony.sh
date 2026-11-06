@@ -19,10 +19,12 @@ USER_ID=$(id -u "$USER_NAME")
 backup /etc/polkit-1/rules.d/49-modem-voice.rules "$SRC/telephony/49-modem-voice.rules"
 install -m 644 "$SRC/telephony/49-modem-voice.rules" /etc/polkit-1/rules.d/
 
-# Volume buttons: answer / silence-the-ringer while a call rings,
-# console font size otherwise. hkdm is restarted further down.
-backup /etc/hkdm/config.d/phone-buttons.toml "$SRC/buttons/phone-buttons.toml"
-install -m 644 "$SRC/buttons/phone-buttons.toml" /etc/hkdm/config.d/
+# Volume buttons: answer / silence-the-ringer while a call rings, call
+# volume while active. Own hkdm config so the buttons install keeps its
+# own bindings (hkdm runs every matching binding; phone-font stands down
+# while a call is up). hkdm is restarted further down.
+backup /etc/hkdm/config.d/phone-telephony.toml "$SRC/telephony/phone-telephony.toml"
+install -m 644 "$SRC/telephony/phone-telephony.toml" /etc/hkdm/config.d/
 backup /usr/local/bin/phone-volume "$SRC/telephony/phone-volume"
 install -m 755 "$SRC/telephony/phone-volume" /usr/local/bin/
 

@@ -99,10 +99,11 @@ compare against — and so a failed `cc` can't leave a truncated binary in
   `phone-ir`, and drops an example `/etc/phone-ir/remotes.conf` (only when
   none exists, so your own codes are never overwritten).
 - `install-telephony.sh` — installs the polkit rule (voice access for the
-  device user), re-points the volume buttons at `phone-volume`, updates
-  `phone-statusbar` (RING/CALL indicator), and puts `call`, `sms-send` and
-  the `call-watcher` user service + ring tone in the device user's
-  `~/.local`. Enables and (re)starts everything it touched.
+  device user), adds its own hkdm binding for the volume buttons
+  (`phone-volume`; the buttons install's bindings are left alone),
+  updates `phone-statusbar` (RING/CALL indicator), and puts `call`,
+  `sms-send` and the `call-watcher` user service + ring tone in the
+  device user's `~/.local`. Enables and (re)starts everything it touched.
 
 ## How it works
 
@@ -120,7 +121,10 @@ ignores volume presses within 2 s of a power press.
 **Font ladder** (`phone-font`): steps between the stock Terminus sizes
 (16/20/24/28/32 px) plus a generated 48 px one; the current step lives in
 `/run/phone-buttons/font-index` (volatile — resets to the biggest after a
-reboot, which is usually what you want on a phone).
+reboot, which is usually what you want on a phone). It stands down while
+a call is ringing or active, so the telephony volume buttons own the keys
+then — each component binds the keys in its own hkdm config, and hkdm
+runs every matching binding.
 
 **Big font** (`fonts/scale-psf.py`): Terminus tops out at 32 px, so
 `fonts/ter-148n.psf.gz` is ter-116n scaled 3× to 24×48. Regenerate with
@@ -238,8 +242,12 @@ While the call rings, `call-watcher` also arms the call audio routing
 The volume buttons go through `phone-volume` while a call rings:
 **volume-up answers, volume-down silences the ringer** (a flag file the
 ring loop checks — the call itself keeps ringing, and volume-up still
-answers it); with no call ringing they fall through to `phone-font` as
-before. Voice control over MM needs a polkit rule
+answers it); during a call they step the earpiece volume (`RX1
+Digital`, ±8 dB per press). Outside a call the buttons belong to the
+buttons install again — telephony ships its **own** hkdm config
+(`telephony/phone-telephony.toml`) for the volume keys, and `phone-font`
+stands down while a call is up, so either component works without the
+other. Voice control over MM needs a polkit rule
 (`49-modem-voice.rules` → `/etc/polkit-1/rules.d/`) — messaging is
 allowed by distro defaults, voice is not.
 
@@ -326,7 +334,7 @@ than two terminal rows.
   root installers (run from `/tmp/basic-terminal` on the device)
 - `backup-helper.sh` — sourced by every installer; keeps timestamped copies
   of replaced files in `<device home>/backup` (changed files only, 2 newest)
-- `buttons/` — `phone-buttons.toml` (hkdm bindings);
+- `buttons/` — `phone-buttons.toml` (hkdm bindings: power, volume);
   `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)
 - `statusbar/` — `phone-statusbar` — Python daemon;
@@ -351,11 +359,13 @@ than two terminal rows.
   installer); `phone-ir-remotes.conf` — example codes, installed to
   `/etc/phone-ir/remotes.conf`
 - `telephony/` — `phone-volume` — volume-button dispatcher (answer /
-  mute ringer while ringing, font size otherwise), installed to
-  `/usr/local/bin/`; `call`, `sms-send` — call control and SMS sending
-  CLIs, installed to the device user's `~/.local/bin/`; `call-watcher` —
-  Python call-event daemon; `call-watcher.service` — its **user** unit;
-  `ring.wav` — the soft two-note chime ringtone it loops (installed to
+  mute ringer while ringing, call volume while active), installed to
+  `/usr/local/bin/`; `phone-telephony.toml` — its own hkdm bindings for
+  the volume keys, installed to `/etc/hkdm/config.d/`; `call`,
+  `sms-send` — call control and SMS sending CLIs, installed to the
+  device user's `~/.local/bin/`; `call-watcher` — Python call-event
+  daemon; `call-watcher.service` — its **user** unit; `ring.wav` — the
+  soft two-note chime ringtone it loops (installed to
   `~/.local/share/ring.wav`); `49-modem-voice.rules` — polkit rule
   granting the device user voice access over ModemManager, installed to
   `/etc/polkit-1/rules.d/`
