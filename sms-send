@@ -1,0 +1,58 @@
+#!/usr/bin/python3
+"""Send an SMS: sms-send <number> <text...>
+
+Text is taken from the remaining arguments, or stdin if no text is given.
+Send mechanics mirror sms-forwarder.py (explicit home SMSC etc.).
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+SMSC_NUMBER = "+351923300050"
+MM_NAME = "org.freedesktop.ModemManager1"
+SENDS_DISABLED = os.path.expanduser("~/.local/state/sms-forwarder/sends-disabled")
+
+
+def main():
+    if len(sys.argv) < 2 or not re.fullmatch(r"\+?[\d\s]+", sys.argv[1]):
+        sys.exit("usage: sms-send <number> <text...>   (text via stdin if omitted)")
+    number = sys.argv[1].replace(" ", "")
+    text = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else sys.stdin.read().strip()
+    if not text:
+        sys.exit("no text to send")
+    if os.path.exists(SENDS_DISABLED):
+        sys.exit("outgoing SMS paused (sends-disabled flag present). "
+                 "Unbar the operator via *136#, then: "
+                 "rm ~/.local/state/sms-forwarder/sends-disabled")
+
+    r = subprocess.run(["mmcli", "-L"], capture_output=True, text=True)
+    m = re.search(r"(/org/freedesktop/ModemManager1/Modem/\d+)", r.stdout)
+    if not m:
+        sys.exit("no modem found")
+    # json.dumps output is valid GVariant text format, handles quoting.
+    r = subprocess.run(
+        ["gdbus", "call", "--system", "--dest", MM_NAME,
+         "--object-path", m.group(1),
+         "--method", f"{MM_NAME}.Modem.Messaging.Create",
+         "{ 'number': <%s>, 'text': <%s>, 'smsc': <%s> }"
+         % (json.dumps(number), json.dumps(text), json.dumps(SMSC_NUMBER))],
+        capture_output=True, text=True)
+    m = re.search(r"objectpath '(/org/[^']+)'", r.stdout)
+    if not m:
+        sys.exit(f"create failed: {(r.stderr or r.stdout).strip()}")
+    path = m.group(1)
+    r = subprocess.run(["mmcli", "-s", path, "--send"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"send failed: {(r.stderr or r.stdout).strip()}", file=sys.stderr)
+    else:
+        print(f"sent to {number}")
+    subprocess.run(["mmcli", "-m", "any", "--messaging-delete-sms=" + path],
+                   capture_output=True, text=True)
+    sys.exit(r.returncode)
+
+
+if __name__ == "__main__":
+    main()

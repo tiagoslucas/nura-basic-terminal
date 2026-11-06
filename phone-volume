@@ -1,0 +1,28 @@
+#!/bin/sh
+# Volume buttons, dispatched by hkdm.
+#   while a call is ringing:  up = answer it, down = silence the ringer
+#                             (the call itself keeps ringing)
+#   otherwise:                console font size, as before
+# Ringing state comes from call-watcher's /tmp/phone-call-state, which is
+# written the moment a call starts ringing.
+STATE=/tmp/phone-call-state
+MUTE=/tmp/call-ring-muted
+
+case "$(cat "$STATE" 2>/dev/null)" in
+ringing*)
+    case "$1" in
+    up)
+        path=$(mmcli -m 0 --voice-list-calls 2>/dev/null \
+               | grep ringing-in \
+               | grep -oE "/org/\S+/Call/[0-9]+" | head -1)
+        [ -n "$path" ] && mmcli -o "$path" --accept
+        ;;
+    down)
+        touch "$MUTE"
+        ;;
+    esac
+    exit 0
+    ;;
+esac
+
+exec /usr/local/bin/phone-font "$1"

@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+"""Call control over ModemManager.
+
+  call <number>     dial
+  call              list calls (index, direction, state)
+  call answer [n]   answer ringing (or n-th) call
+  call hangup       hang up all ongoing calls
+  call hangup n     hang up the n-th call
+"""
+import re
+import subprocess
+import sys
+
+LIST_RE = re.compile(r"(\S+/Call/\d+)\s+(incoming|outgoing)\s+\((\S+)\)")
+
+
+def mm(*args):
+    return subprocess.run(["mmcli", "-m", "any", *args],
+                          capture_output=True, text=True)
+
+
+def calls():
+    return LIST_RE.findall(mm("--voice-list-calls").stdout)
+
+
+def show(r):
+    print((r.stderr or r.stdout).strip())
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    if not cmd or cmd in ("ls", "list"):
+        cs = calls()
+        if not cs:
+            print("no calls")
+        for i, (path, direction, state) in enumerate(cs):
+            print(f"{i}: {direction:8} {state:12} {path}")
+
+    elif cmd == "answer":
+        cs = calls()
+        if not cs:
+            sys.exit("no calls")
+        ringing = [c for c in cs if c[2] == "ringing-in"] or cs
+        target = ringing[int(sys.argv[2])] if len(sys.argv) > 2 else ringing[0]
+        show(mm("-o", target[0], "--accept"))
+
+    elif cmd == "hangup":
+        cs = calls()
+        if len(sys.argv) > 2:
+            show(mm("-o", cs[int(sys.argv[2])][0], "--hangup"))
+        else:
+            live = [c for c in cs if c[2] not in ("terminated", "unknown")]
+            if not live:
+                print("no ongoing calls")
+            for path, _, _ in live:
+                show(mm("-o", path, "--hangup"))
+
+    elif re.fullmatch(r"\+?[\d\s]+", cmd):
+        r = mm("--voice-create-call", "number=" + cmd.replace(" ", ""))
+        m = re.search(r"(/org/\S+/Call/\d+)", r.stdout)
+        if not m:
+            sys.exit((r.stderr or r.stdout).strip() or "create failed")
+        print(f"dialing {cmd} ...")
+        show(mm("-o", m.group(1), "--start"))
+
+    else:
+        sys.exit(__doc__.strip())
+
+
+if __name__ == "__main__":
+    main()

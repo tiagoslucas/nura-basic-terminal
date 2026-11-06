@@ -1,0 +1,178 @@
+#!/usr/bin/python3
+"""Watch ModemManager call events: log them, ring on incoming calls,
+show ring/call state in the phone-statusbar, wake the screen on a ring,
+and delete terminated call objects so the list stays clean.
+
+Runs as a user service. Signal listener mirrors sms-forwarder.py.
+Status bar integration: on every call state change, write
+"<state> <number>" to STATE_FILE and SIGUSR1 phone-statusbar (root
+system service, via doas) so it repaints immediately. On an incoming
+ring the screen is also lit via phone-screen-toggle --do-toggle, which
+only wakes (never darkens) when the screen-off flag is present.
+"""
+import os
+import re
+import subprocess
+import time
+
+MM_NAME = "org.freedesktop.ModemManager1"
+RING_WAV = os.path.expanduser("~/.local/share/ring.wav")
+STATE_FILE = "/tmp/phone-call-state"
+SCREEN_OFF_FLAG = "/run/phone-buttons/screen-off"
+# volume-down while ringing touches this to silence the ringer; the call
+# keeps ringing. A new incoming call clears it.
+MUTE_FLAG = "/tmp/call-ring-muted"
+
+# /org/.../Modem/0: org.freedesktop.ModemManager1.Modem.Voice.CallAdded (objectpath '/org/.../Call/0')
+VOICE_RE = re.compile(
+    r"^(/org/\S+):\s+org\.freedesktop\.ModemManager1\.Modem\.Voice\."
+    r"(CallAdded|CallDeleted)\s+\(\s*objectpath\s+'(?P<path>/org/[^']+)'")
+# /org/.../Call/0: org.freedesktop.ModemManager1.Call.StateChanged (...)
+STATE_RE = re.compile(
+    r"^(/org/\S+/Call/\d+):\s+org\.freedesktop\.ModemManager1\.Call\.StateChanged")
+LIST_RE = re.compile(r"(\S+/Call/\d+)\s+(incoming|outgoing)\s+\((\S+)\)")
+
+
+def log(msg):
+    print(time.strftime("[%Y-%m-%d %H:%M:%S]"), msg, flush=True)
+
+
+def calls():
+    r = subprocess.run(["mmcli", "-m", "any", "--voice-list-calls"],
+                       capture_output=True, text=True)
+    return LIST_RE.findall(r.stdout)
+
+
+def number_of(path):
+    r = subprocess.run(["mmcli", "-o", path], capture_output=True, text=True)
+    m = re.search(r"number:\s*(\S+)", r.stdout)
+    return m.group(1) if m else "unknown"
+
+
+def write_state(text):
+    """Atomically update the file phone-statusbar shows as RING/CALL."""
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, STATE_FILE)
+
+
+def poke_statusbar():
+    subprocess.run(["sudo", "-n", "systemctl", "kill", "-s", "SIGUSR1",
+                    "phone-statusbar"], capture_output=True)
+
+
+def wake_screen():
+    """Light the screen for an incoming ring, but never darken it:
+    --do-toggle's wake branch only runs when the screen-off flag exists."""
+    if os.path.exists(SCREEN_OFF_FLAG):
+        subprocess.run(["sudo", "-n", "/usr/local/bin/phone-screen-toggle",
+                        "--do-toggle"], capture_output=True)
+
+
+class Ringer:
+    """Loops ring.wav on the default sink while a call is ringing."""
+
+    def __init__(self):
+        self.proc = None
+
+    def start(self):
+        # no -q: this paplay build rejects it (that's why ringing was silent)
+        if self.proc is None and os.path.exists(RING_WAV):
+            try:
+                os.unlink(MUTE_FLAG)  # a new ring is audible again
+            except FileNotFoundError:
+                pass
+            self.proc = subprocess.Popen(
+                ["sh", "-c",
+                 "while :; do "
+                 f"[ -e {MUTE_FLAG} ] && {{ sleep 1; continue; }}; "
+                 f"paplay --volume=25000 '{RING_WAV}'; sleep 2; done"])
+
+    def stop(self):
+        if self.proc is not None:
+            self.proc.terminate()
+            self.proc = None
+
+
+def reconcile(ringer, seen_states):
+    """Act on current call list vs. what we last saw."""
+    current = {path: (direction, state) for path, direction, state in calls()}
+    live_number = None
+    live_state = None
+    for path, (direction, state) in current.items():
+        old = seen_states.get(path)
+        if old == state:
+            continue
+        number = number_of(path)
+        seen_states[path] = state
+        if state == "ringing-in":
+            log(f"incoming call from {number}")
+            ringer.start()
+            wake_screen()
+        elif old == "ringing-in":
+            ringer.stop()
+            log(f"incoming call {number} now {state}")
+        elif state == "terminated":
+            log(f"call {number} terminated, cleaning up")
+            subprocess.run(["mmcli", "-m", "any", "--voice-delete-call=" + path],
+                           capture_output=True, text=True)
+            seen_states.pop(path, None)
+        else:
+            log(f"call {number}: {old or 'created'} -> {state}")
+        if state not in ("terminated", "unknown"):
+            live_state, live_number = state, number
+    # one statusbar update per reconcile: latest live call wins
+    if live_state:
+        write_state(f"{'ringing' if live_state == 'ringing-in' else 'active'}"
+                    f" {live_number}")
+    elif seen_states:
+        pass  # call objects still around but nothing live: keep last state
+    else:
+        try:
+            os.unlink(STATE_FILE)
+        except FileNotFoundError:
+            pass
+    poke_statusbar()
+    # Calls deleted out from under us (or by us)
+    for path in set(seen_states) - set(current):
+        old = seen_states.pop(path)
+        if old[1] == "ringing-in":
+            ringer.stop()
+        log(f"call object {path} gone")
+
+
+def main():
+    ringer = Ringer()
+    seen_states = {}
+    # a leftover state file from a previous daemon run would pin a stale
+    # RING/CALL in the status bar forever, and a stale mute flag would
+    # silence the next ring
+    for stale in (STATE_FILE, MUTE_FLAG):
+        try:
+            os.unlink(stale)
+        except FileNotFoundError:
+            pass
+    log("watching calls")
+    while True:
+        proc = subprocess.Popen(
+            ["gdbus", "monitor", "--system", "--dest", MM_NAME],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if VOICE_RE.match(line) or STATE_RE.match(line):
+                    # Give ModemManager a moment to settle the new state
+                    time.sleep(0.3)
+                    reconcile(ringer, seen_states)
+        finally:
+            proc.terminate()
+            ringer.stop()
+        rc = proc.wait()
+        log(f"gdbus monitor exited (rc={rc}), restarting in 5s")
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()
