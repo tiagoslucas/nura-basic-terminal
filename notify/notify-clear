@@ -1,9 +1,23 @@
 #!/bin/sh
-# Dismiss missed-call / unread-SMS notifications; the LED goes dark.
+# Dismiss notification flags; the LED goes dark when none are left.
+#   notify-clear            dismiss everything
+#   notify-clear sms        mark the unread SMS as seen
+#   notify-clear missed     dismiss the missed-call indication
 D="$HOME/.local/state/notify-led"
-if [ -e "$D/missed" ] || [ -e "$D/sms" ]; then
-    rm -f "$D/missed" "$D/sms"
-    echo "notifications cleared"
+case "${1:-all}" in
+    all) set -- missed sms ;;
+    sms | missed) set -- "$1" ;;
+    *) echo "usage: notify-clear [missed|sms]" >&2; exit 2 ;;
+esac
+found=""
+for f in "$@"; do
+    if [ -e "$D/$f" ]; then
+        rm -f "$D/$f"
+        found="$found $f"
+    fi
+done
+if [ -n "$found" ]; then
+    echo "cleared:$found"
 else
     echo "nothing to clear"
 fi

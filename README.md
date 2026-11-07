@@ -280,7 +280,10 @@ the white indicator LED: fast blink while a call rings, steady while a
 call is active, slow blink after a **missed call** (an incoming call that
 ended unanswered — detected even when `call-watcher` deletes the call
 object first, via the CallDeleted signal) and a double blink for a
-**received SMS**, until `notify-clear` dismisses them. The two flags are
+**received SMS**, until `notify-clear` dismisses them — alone it clears
+both, `notify-clear sms` / `notify-clear missed` just one, so an unread
+SMS can be marked seen without dropping the missed-call indication. The
+flags are
 files in `~/.local/state/notify-led/`, so they survive restarts and
 reboots. daisy's LED is a single white diode (one channel of its aw2013
 driver), so the patterns are brightness-only; the daemon writes
@@ -389,7 +392,8 @@ than two terminal rows.
   granting the device user voice access over ModemManager, installed to
   `/etc/polkit-1/rules.d/`
 - `notify/` — `notify-led` — Python daemon driving the notification LED;
-  `notify-clear` — dismisses the missed-call / unread-SMS flags;
+  `notify-clear` — dismisses notification flags, all or by name
+  (`notify-clear [missed|sms]`);
   `notify-led.service` — its **user** unit; `70-notify-led.rules` — udev
   rule making the LED user-writable, installed to `/etc/udev/rules.d/`
 - `fonts/` — `scale-psf.py` — PSF1 → PSF2 integer font scaler;
