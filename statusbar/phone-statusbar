@@ -31,6 +31,7 @@ the cellular half sits at the left edge of the bar and battery/clock at
 the right — swaybar right-aligns an unpadded line, which puts the
 cellular info behind the display notch.
 """
+import glob
 import gzip
 import os
 import select
@@ -51,6 +52,9 @@ EDGE_MARGIN = 5                       # px unused at each screen edge
 TEXT_MARGIN = 16                      # px between screen edge and indicator text
 CONFIG = "/etc/phone-statusbar.conf"  # optional KEY=value overrides
 CALL_STATE = "/tmp/phone-call-state"  # "<state> <number>" from call-watcher
+# notify-led's unread flags, in the device user's state dir (this daemon
+# runs as root on the console, where ~ would be /root)
+NOTIFY_DIR = (glob.glob("/home/*/.local/state/notify-led") + [""])[0]
 
 
 def load_config(path):
@@ -292,6 +296,16 @@ def status_parts(net):
 
     # clock beside the battery, e.g. "87% 14:05"
     right += time.strftime(" %H:%M")
+
+    # unread notifications (flags kept by the notify-led daemon; the LED
+    # blinks for the same events) — shown beside the network info, but
+    # hidden during a call: RING/CALL take the whole column budget
+    notes = [] if cstate in ("ringing", "active") else [
+        n for n, flag in (("SMS", "sms"), ("MISS", "missed"))
+        if NOTIFY_DIR and os.path.exists(os.path.join(NOTIFY_DIR, flag))]
+    if notes:
+        left = f"{left} {' '.join(notes)}"
+        lrgb = GREEN
     return left, lrgb, right, rrgb
 
 
