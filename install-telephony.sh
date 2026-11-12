@@ -1,7 +1,8 @@
 #!/bin/sh
-# Install telephony: SMS sending, call control, and incoming-call
-# handling (ring tone, screen wake, RING/CALL in the status bar,
-# volume-up answers, volume-down silences the ringer).
+# Install telephony: SMS sending, call control, incoming-call handling
+# (ring tone, screen wake, RING/CALL in the status bar, volume-up
+# answers, volume-down silences the ringer), and the received-SMS
+# handler (runs COMMAND from /etc/phone-sms-handler.conf per message).
 # Run as root on the postmarketOS device:
 #   doas sh /tmp/basic-terminal/install-telephony.sh
 set -e
@@ -38,7 +39,7 @@ install -m 755 "$SRC/statusbar/phone-statusbar" /usr/local/bin/
 # Per-user tools + ring tone
 BIN="$USER_HOME/.local/bin"
 mkdir -p "$BIN" "$USER_HOME/.local/share" "$USER_HOME/.config/systemd/user"
-for f in call sms-send call-watcher; do  # telephony/
+for f in call sms-send call-watcher sms-handler; do  # telephony/
     backup "$BIN/$f" "$SRC/telephony/$f"
     install -m 755 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/$f" "$BIN/"
 done
@@ -46,6 +47,10 @@ done
 # SMSC config — never overwrite an already-set number
 if [ ! -f /etc/phone-sms.conf ]; then
     install -m 644 "$SRC/telephony/phone-sms.conf" /etc/phone-sms.conf
+fi
+# SMS handler config — never overwrite a configured COMMAND
+if [ ! -f /etc/phone-sms-handler.conf ]; then
+    install -m 644 "$SRC/telephony/phone-sms-handler.conf" /etc/phone-sms-handler.conf
 fi
 # an earlier deploy installed the watcher as call-watcher.py
 if [ -e "$BIN/call-watcher.py" ] && cmp -s "$BIN/call-watcher.py" "$SRC/telephony/call-watcher"; then
@@ -69,6 +74,13 @@ systemctl restart phone-statusbar
 doas -u "$USER_NAME" env $USVC daemon-reload
 doas -u "$USER_NAME" env $USVC enable --now call-watcher.service
 doas -u "$USER_NAME" env $USVC restart call-watcher.service
+backup "$USER_HOME/.config/systemd/user/sms-handler.service" \
+    "$SRC/telephony/sms-handler.service"
+install -m 644 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/sms-handler.service" \
+    "$USER_HOME/.config/systemd/user/"
+doas -u "$USER_NAME" env $USVC enable --now sms-handler.service
+doas -u "$USER_NAME" env $USVC restart sms-handler.service
 sleep 2
 doas -u "$USER_NAME" env $USVC is-active call-watcher.service
+doas -u "$USER_NAME" env $USVC is-active sms-handler.service
 echo "TELEPHONY INSTALL DONE"

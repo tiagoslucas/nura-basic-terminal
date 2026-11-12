@@ -1,0 +1,10 @@
+[Unit]
+Description=Run a command for each received SMS
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/bin/sms-handler
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
