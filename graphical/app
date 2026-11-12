@@ -8,7 +8,8 @@
 # saves a screenshot to the device user's ~/Pictures. Console stack
 # (buffyboard/statusbar/gestures) is paused meanwhile and restored
 # afterwards.
-# Usage from the console: sudo app firefox
+# Usage from the console: app firefox (the doas rule installed with this
+# component lets the phone user run it as root without a password)
 set -e
 [ $# -ge 1 ] || { echo "usage: app CMD [ARGS...]" >&2; exit 1; }
 export PHONE_APP_CMD="$*"

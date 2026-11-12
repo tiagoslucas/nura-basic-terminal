@@ -1,0 +1,4 @@
+# Let the phone user launch graphical apps without a password: app must
+# run as root for the VT/seat setup. @USER@ is filled in by
+# install-graphical.sh.
+permit nopass @USER@ as root cmd /usr/local/bin/app

@@ -10,6 +10,9 @@ set -e
 SRC=/tmp/basic-terminal
 . "$SRC/backup-helper.sh"
 
+USER_HOME=$(set -- /home/*; echo "${1:-/root}")
+USER_NAME=$(stat -c %U "$USER_HOME")
+
 # sway replaces what cage did (it has layer-shell, so wvkbd works);
 # seatd-launch gives sway a seat outside a logind session; grim captures
 apk add sway wvkbd seatd-launch grim 2>/dev/null || true
@@ -27,7 +30,19 @@ backup /etc/hkdm/config.d/phone-screenshot.toml "$SRC/graphical/phone-screenshot
 install -m 644 -o root -g root "$SRC/graphical/phone-screenshot.toml" \
     /etc/hkdm/config.d/
 
+# app must run as root for the VT/seat setup; let the phone user launch
+# it without a password. Template like the polkit rule in
+# install-telephony.sh (generated to a temp file first so the backup
+# helper compares against the real thing).
+sed "s/@USER@/$USER_NAME/" "$SRC/graphical/49-app-doas.conf.in" \
+    > /tmp/49-app-doas.conf
+backup /etc/doas.d/49-app-doas.conf /tmp/49-app-doas.conf
+install -m 600 -o root -g root /tmp/49-app-doas.conf /etc/doas.d/
+# and a plain `app` (no doas typing) for login shells
+backup /etc/profile.d/app-alias.sh "$SRC/graphical/app-alias.sh"
+install -m 644 -o root -g root "$SRC/graphical/app-alias.sh" /etc/profile.d/
+
 systemctl restart hkdm
 
-echo "Try it from the console: sudo app firefox"
+echo "Try it from the console: app firefox"
 echo "INSTALL DONE"

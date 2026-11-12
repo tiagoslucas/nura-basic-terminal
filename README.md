@@ -3,7 +3,7 @@
 ![Firefox on the NuraOS site, running fullscreen via `app`](screenshots/firefox-nuraos.png)
 
 Make a postmarketOS phone usable **without a GUI** — and give it one when
-you want it (`sudo app firefox`, above). If your phone runs a bare
+you want it (`app firefox`, above). If your phone runs a bare
 VT console (fbcon) — as a hotspot, a server, a mini-terminal — the hardware
 buttons do nothing, the console font is unreadably small, there's no way
 to see battery or signal without logging in, and no way to scroll back
@@ -117,7 +117,11 @@ compare against — and so a failed `cc` can't leave a truncated binary in
   everything it touched.
 - `install-graphical.sh` — installs `app`, `app-inner`, `swaybar-user`
   and `phone-screenshot` into `/usr/local/bin`, `/etc/app-sway.conf`, and
-  the `phone-screenshot.toml` hkdm binding; `apk add`s sway / wvkbd /
+  the `phone-screenshot.toml` hkdm binding; also the doas rule
+  (`49-app-doas.conf`, from a `@USER@` template like the polkit one) that
+  lets the device user run `app` as root without a password, plus the
+  `/etc/profile.d/app-alias.sh` alias so a plain `app` works in login
+  shells; `apk add`s sway / wvkbd /
   seatd-launch / grim and restarts hkdm. Needs the buttons and statusbar
   components (`phone-screen-toggle` carries the session-aware patches,
   the bar's `status_command` is `phone-statusbar --text`).
@@ -339,10 +343,12 @@ light, at the lowest priority — checked against `current_now`, because
 the pmi8994 fuel gauge's status word claims Charging while the battery
 is discharging; the current's sign is the truth.
 
-**Graphical apps** (`app`): `sudo app firefox` (or any Wayland app) runs a
+**Graphical apps** (`app`): `app firefox` (or any Wayland app) runs a
 sway kiosk on VT3 — `openvt` gives sway the VT, `seatd-launch` gives it a
 seat outside a logind session, and the app itself runs as the device user
-against the root-owned wayland socket. The output is scaled 3× (1080×2280
+against the root-owned wayland socket. The launcher runs as root (it
+pauses console services and switches VTs); the doas rule installed with
+it lets the device user type just `app`, no password. The output is scaled 3× (1080×2280
 physical → 360×760 logical), so buttons and page content are finger-sized;
 the screenshot at the top of this README was taken that way. The console
 stack (buffyboard, status bar, gestures) is paused while the session runs
@@ -450,13 +456,15 @@ than two terminal rows.
 - `buttons/` — `phone-buttons.toml` (hkdm bindings: power, volume);
   `phone-screen-toggle`, `phone-font` — shell scripts (installed to
   `/usr/local/bin/`)
-- `graphical/` — `app` (the launcher: `sudo app <wayland app>`),
-  `app-inner` (run by sway at startup: wayland socket perms, wvkbd, the
-  app itself), `app-sway.conf` (kiosk sway config, 3× scale, status bar,
-  installed to `/etc/`), `swaybar-user` (the `swaybar_command` wrapper
-  that drops sway's bar to the device user), `phone-screenshot` (grim
-  capture), `phone-screenshot.toml`
-  (hkdm binding for the vol-up + power combo)
+- `graphical/` — `app` (the launcher: `app <wayland app>`, run via the
+  doas rule as root), `app-inner` (run by sway at startup: wayland socket
+  perms, wvkbd, the app itself), `app-sway.conf` (kiosk sway config, 3×
+  scale, status bar, installed to `/etc/`), `swaybar-user` (the
+  `swaybar_command` wrapper that drops sway's bar to the device user),
+  `phone-screenshot` (grim capture), `phone-screenshot.toml`
+  (hkdm binding for the vol-up + power combo), `49-app-doas.conf.in`
+  (doas-rule template, `@USER@` filled in by the installer),
+  `app-alias.sh` (profile.d alias `app` → `doas app`)
 - `screenshots/` — `firefox-nuraos.png`, taken on the device with
   vol-up + power
 - `statusbar/` — `phone-statusbar` — Python daemon;
