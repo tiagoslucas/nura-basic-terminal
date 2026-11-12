@@ -108,9 +108,10 @@ compare against — and so a failed `cc` can't leave a truncated binary in
 - `install-telephony.sh` — installs the polkit rule (voice access for the
   device user), adds its own hkdm binding for the volume buttons
   (`phone-volume`; the buttons install's bindings are left alone),
-  updates `phone-statusbar` (RING/CALL indicator), and puts `call`,
+  updates `phone-statusbar` (RING/CALL indicator), puts `call`,
   `sms-send` and the `call-watcher` user service + ring tone in the
-  device user's `~/.local`. Enables and (re)starts everything it touched.
+  device user's `~/.local`, and drops `/etc/phone-sms.conf` (SMSC) only
+  when none exists. Enables and (re)starts everything it touched.
 - `install-graphical.sh` — installs `app`, `app-inner`, `swaybar-user`
   and `phone-screenshot` into `/usr/local/bin`, `/etc/app-sway.conf`, and
   the `phone-screenshot.toml` hkdm binding; `apk add`s sway / wvkbd /
@@ -248,8 +249,8 @@ calls and SMS through ModemManager's D-Bus API — no ofono, no GUI dialer.
 `call <number>` creates and starts an MM call object; `call` lists them,
 `call answer [n]` accepts, `call hangup [n]` ends. `sms-send <number>
 <text>` creates an SMS, sends it and deletes the object; the modem here
-has no default SMSC stored, so the message center is passed explicitly
-(see Customizing). Incoming calls are handled by `call-watcher`, a user
+has no default SMSC stored, so the message center comes from
+`/etc/phone-sms.conf` (see Customizing). Incoming calls are handled by `call-watcher`, a user
 service that watches MM's call signals: on a ring it plays
 `~/.local/share/ring.wav` in a loop, lights the screen via
 `phone-screen-toggle --do-toggle` (only when the screen-off flag exists,
@@ -352,11 +353,13 @@ All the device-specific paths are constants at the top of the scripts:
   access-technology names
 - `phone-gestures`: `SCREEN_W/H`, `KEYBOARD_TOP` (px), the drag→line and
   tap sensitivities, and `UID`/`TMUX`/`SESSION` for the tmux socket
-- `sms-send`: `SMSC_NUMBER` — the message center, read from EF_SMSP on
-  the SIM (this modem sends nothing without it). The polkit rule
-  (`49-modem-voice.rules.in`) has an `@USER@` placeholder that
-  `install-telephony.sh` fills in with the device user, so no edit is
-  needed.
+- `sms-send`: `SMSC` in `/etc/phone-sms.conf` (template:
+  `telephony/phone-sms.conf`, installed only when none exists) — the
+  message center, operator/SIM-specific; find yours from the SIM's
+  EF_SMSP record or the operator's docs (this modem sends nothing
+  without it). The polkit rule (`49-modem-voice.rules.in`) has an
+  `@USER@` placeholder that `install-telephony.sh` fills in with the
+  device user, so no edit is needed.
 - `call-watcher`: `RING_WAV`, the ring `--volume=` (0–65536 linear), and
   the state/mute flag paths (shared with `phone-volume` and
   `phone-statusbar`)
@@ -453,7 +456,9 @@ than two terminal rows.
   `/usr/local/bin/`; `phone-telephony.toml` — its own hkdm bindings for
   the volume keys, installed to `/etc/hkdm/config.d/`; `call`,
   `sms-send` — call control and SMS sending CLIs, installed to the
-  device user's `~/.local/bin/`; `call-watcher` — Python call-event
+  device user's `~/.local/bin/`; `phone-sms.conf` — SMSC config
+  template, installed to `/etc/phone-sms.conf` only when none exists;
+  `call-watcher` — Python call-event
   daemon; `call-watcher.service` — its **user** unit; `ring.wav` — the
   soft two-note chime ringtone it loops (installed to
   `~/.local/share/ring.wav`); `49-modem-voice.rules.in` — polkit rule

@@ -10,9 +10,22 @@ import re
 import subprocess
 import sys
 
-SMSC_NUMBER = "+351923300050"
+CONFIG = "/etc/phone-sms.conf"  # SMSC=<number> (see phone-sms.conf)
 MM_NAME = "org.freedesktop.ModemManager1"
 SENDS_DISABLED = os.path.expanduser("~/.local/state/sms-forwarder/sends-disabled")
+
+
+def read_smsc():
+    """SMSC from the config file, or None. The message center is
+    operator/SIM-specific and this modem sends nothing without one."""
+    try:
+        for line in open(CONFIG):
+            key, sep, val = line.split("#", 1)[0].partition("=")
+            if sep and key.strip() == "SMSC" and val.strip():
+                return val.strip()
+    except OSError:
+        pass
+    return None
 
 
 def main():
@@ -26,6 +39,10 @@ def main():
         sys.exit("outgoing SMS paused (sends-disabled flag present). "
                  "Unbar the operator via *136#, then: "
                  "rm ~/.local/state/sms-forwarder/sends-disabled")
+    smsc = read_smsc()
+    if not smsc:
+        sys.exit(f"no SMSC configured: set SMSC=<number> in {CONFIG} "
+                 "(operator/SIM-specific; see the comments there)")
 
     r = subprocess.run(["mmcli", "-L"], capture_output=True, text=True)
     m = re.search(r"(/org/freedesktop/ModemManager1/Modem/\d+)", r.stdout)
@@ -37,7 +54,7 @@ def main():
          "--object-path", m.group(1),
          "--method", f"{MM_NAME}.Modem.Messaging.Create",
          "{ 'number': <%s>, 'text': <%s>, 'smsc': <%s> }"
-         % (json.dumps(number), json.dumps(text), json.dumps(SMSC_NUMBER))],
+         % (json.dumps(number), json.dumps(text), json.dumps(smsc))],
         capture_output=True, text=True)
     m = re.search(r"objectpath '(/org/[^']+)'", r.stdout)
     if not m:

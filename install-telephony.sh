@@ -42,6 +42,11 @@ for f in call sms-send call-watcher; do  # telephony/
     backup "$BIN/$f" "$SRC/telephony/$f"
     install -m 755 -o "$USER_NAME" -g "$USER_NAME" "$SRC/telephony/$f" "$BIN/"
 done
+
+# SMSC config — never overwrite an already-set number
+if [ ! -f /etc/phone-sms.conf ]; then
+    install -m 644 "$SRC/telephony/phone-sms.conf" /etc/phone-sms.conf
+fi
 # an earlier deploy installed the watcher as call-watcher.py
 if [ -e "$BIN/call-watcher.py" ] && cmp -s "$BIN/call-watcher.py" "$SRC/telephony/call-watcher"; then
     rm -f "$BIN/call-watcher.py"
