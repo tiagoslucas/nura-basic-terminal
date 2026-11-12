@@ -1,9 +1,9 @@
 #!/bin/sh
 # app-inner — run by sway as root at startup. Opens the wayland socket
-# to tiagol (sway creates it root-owned; apps run as tiagol), starts the
-# on-screen keyboard hidden (power double-click toggles it, via
-# phone-screen-toggle signaling wvkbd), runs the app, exits sway when it
-# ends. wvkbd colors are buffyboard's default breezy-light theme
+# to the device user (sway creates it root-owned; apps run as the user),
+# starts the on-screen keyboard hidden (power double-click toggles it,
+# via phone-screen-toggle signaling wvkbd), runs the app, exits sway
+# when it ends. wvkbd colors are buffyboard's default breezy-light theme
 # (shared/themes.c in ~/build/buffybox), so both keyboards look alike.
 i=0
 while [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && [ "$i" -lt 50 ]; do
@@ -18,10 +18,13 @@ wvkbd-mobintl --hidden \
     --press 3daee9 --press-sp 3daee9 \
     --text 232629 --text-sp 232629 &
 
-sudo -u tiagol env \
+# the device user by uid (owner of the single home under /home), so any
+# username works; sudo takes "#<uid>"
+home=$(set -- /home/*; echo "${1:-/root}")
+sudo -u "#$(stat -c %u "$home")" env \
     WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-    XDG_RUNTIME_DIR=/run/user/10000 \
-    HOME=/home/tiagol \
+    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    HOME="$home" \
     sh -c "exec $PHONE_APP_CMD"
 
 swaymsg exit

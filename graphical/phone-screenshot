@@ -1,16 +1,19 @@
 #!/bin/sh
 # phone-screenshot — capture the graphical (sway) session with grim to
-# ~tiagol/Pictures/screenshot-<timestamp>.png. Vol-up held + power click
-# runs this via phone-screen-toggle; can also be run directly as root.
-# No-op when no graphical session is up (console capture would need
-# fbgrab, which is not installed).
+# the device user's ~/Pictures/screenshot-<timestamp>.png (device user =
+# owner of the single home under /home, by uid). Vol-up held + power
+# click runs this via phone-screen-toggle; can also be run directly as
+# root. No-op when no graphical session is up (console capture would
+# need fbgrab, which is not installed).
 pgrep -x sway >/dev/null || exit 0
-sock=$(ls -t /run/user/10000/wayland-* 2>/dev/null | head -1)
+home=$(set -- /home/*; echo "${1:-/root}")
+uid=$(stat -c %u "$home")
+sock=$(ls -t /run/user/$uid/wayland-* 2>/dev/null | head -1)
 [ -S "$sock" ] || exit 0
-mkdir -p /home/tiagol/Pictures
-chown tiagol:tiagol /home/tiagol/Pictures
-out=/home/tiagol/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
-sudo -u tiagol env \
-    XDG_RUNTIME_DIR=/run/user/10000 \
+mkdir -p "$home/Pictures"
+chown "$uid:$uid" "$home/Pictures"
+out=$home/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+sudo -u "#$uid" env \
+    XDG_RUNTIME_DIR=/run/user/$uid \
     WAYLAND_DISPLAY="${sock##*/}" \
     grim "$out" && echo "phone-screenshot: $out"

@@ -2,16 +2,18 @@
 # swaybar-user — run by sway (as root) instead of swaybar, via
 # swaybar_command in /etc/app-sway.conf. Root's swaybar can't use the
 # user session bus: with the bus present its tray code segfaults, without
-# it exits — so drop to tiagol, whose bus and runtime dir these are, and
-# run the real swaybar from there. Both sway sockets are root-owned at
-# this point (app-inner's chmod comes later) and the WAYLAND_SOCKET fd
-# sway hands us doesn't survive sudo, so open the socket paths and make
-# swaybar connect by name.
+# it exits — so drop to the device user, whose bus and runtime dir these
+# are, and run the real swaybar from there (by uid: the owner of the
+# single home under /home, so any username works). sway passes
+# SWAYSOCK/WAYLAND_DISPLAY/XDG_RUNTIME_DIR in our env; the IPC socket is
+# root-owned, so open it for the user first (app-inner does the same for
+# the wayland socket), and drop the WAYLAND_SOCKET fd, which doesn't
+# survive sudo — swaybar must connect by socket name instead.
 unset WAYLAND_SOCKET
-chmod 666 "$SWAYSOCK" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" 2>/dev/null
-exec sudo -u tiagol env \
+chmod 666 "$SWAYSOCK" 2>/dev/null
+exec sudo -u "#$(stat -c %u "$(set -- /home/*; echo "${1:-/root}")")" env \
     SWAYSOCK="$SWAYSOCK" \
     WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-    XDG_RUNTIME_DIR=/run/user/10000 \
-    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/10000/bus \
+    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" \
     /usr/bin/swaybar "$@"

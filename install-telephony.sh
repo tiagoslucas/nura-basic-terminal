@@ -14,10 +14,13 @@ USER_ID=$(id -u "$USER_NAME")
 
 # Let the phone user place/answer calls through ModemManager (messaging
 # is allowed by distro defaults; voice is not). polkit picks up rules
-# files on its own. NOTE: the rule names a specific user — edit it if
-# your device user differs.
-backup /etc/polkit-1/rules.d/49-modem-voice.rules "$SRC/telephony/49-modem-voice.rules"
-install -m 644 "$SRC/telephony/49-modem-voice.rules" /etc/polkit-1/rules.d/
+# files on its own. The rule is a template: @USER@ is filled in with the
+# device user here (generated to a temp file first so the backup helper
+# has the real thing to compare against, like install-ir.sh's irsend).
+sed "s/@USER@/$USER_NAME/" "$SRC/telephony/49-modem-voice.rules.in" \
+    > /tmp/49-modem-voice.rules
+backup /etc/polkit-1/rules.d/49-modem-voice.rules /tmp/49-modem-voice.rules
+install -m 644 /tmp/49-modem-voice.rules /etc/polkit-1/rules.d/
 
 # Volume buttons: answer / silence-the-ringer while a call rings, call
 # volume while active. Own hkdm config so the buttons install keeps its

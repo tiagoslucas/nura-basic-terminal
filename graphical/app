@@ -1,18 +1,20 @@
 #!/bin/sh
 # app CMD [ARGS...] — run a graphical (Wayland) app fullscreen on the
 # phone, like cage did but with a 3x-scaled display and an on-screen
-# keyboard. sway kiosk on VT3; the app runs as tiagol and sway exits when
-# the app does. While the session is up: power double-click toggles the
-# keyboard (wvkbd), vol-up held + power click saves a screenshot to
-# ~tiagol/Pictures. Console stack (buffyboard/statusbar/gestures) is
-# paused meanwhile and restored afterwards.
+# keyboard. sway kiosk on VT3; the app runs as the device user (resolved
+# by uid — the owner of the single home under /home, like the installers)
+# and sway exits when the app does. While the session is up: power
+# double-click toggles the keyboard (wvkbd), vol-up held + power click
+# saves a screenshot to the device user's ~/Pictures. Console stack
+# (buffyboard/statusbar/gestures) is paused meanwhile and restored
+# afterwards.
 # Usage from the console: sudo app firefox
 set -e
 [ $# -ge 1 ] || { echo "usage: app CMD [ARGS...]" >&2; exit 1; }
 export PHONE_APP_CMD="$*"
 
-# wayland socket dir shared by sway (root), wvkbd (root) and the app (tiagol)
-export XDG_RUNTIME_DIR=/run/user/10000
+# wayland socket dir shared by sway (root), wvkbd (root) and the app
+export XDG_RUNTIME_DIR=/run/user/$(stat -c %u "$(set -- /home/*; echo "${1:-/root}")")
 
 systemctl stop buffyboard.service phone-statusbar.service phone-gestures.service
 trap 'systemctl start buffyboard.service phone-statusbar.service phone-gestures.service; chvt 1' EXIT INT TERM

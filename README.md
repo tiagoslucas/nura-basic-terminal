@@ -85,7 +85,7 @@ What the installers do:
 
 All the installers source `backup-helper.sh`. When one overwrites a file
 **that actually changed**, the old version is copied, timestamped, into
-`<device home>/backup` (e.g. `/home/tiagol/backup/phone-gestures.20261103-115600`),
+`<device home>/backup` (e.g. `/home/<device user>/backup/phone-gestures.20261103-115600`),
 so a bad deploy can be rolled back by hand. Reinstalling an identical file
 backs up nothing, and only the 2 newest copies of each file are kept — these
 scripts are reinstalled often and the folder shouldn't grow without bound.
@@ -269,8 +269,9 @@ buttons install again — telephony ships its **own** hkdm config
 (`telephony/phone-telephony.toml`) for the volume keys, and `phone-font`
 stands down while a call is up, so either component works without the
 other. Voice control over MM needs a polkit rule
-(`49-modem-voice.rules` → `/etc/polkit-1/rules.d/`) — messaging is
-allowed by distro defaults, voice is not.
+(`49-modem-voice.rules.in`, with the device user substituted by the
+installer → `/etc/polkit-1/rules.d/`) — messaging is allowed by distro
+defaults, voice is not.
 
 **Call audio routing**: the voice call itself never passes through
 Linux (q6voiced just opens the hostless VoiceMMode1 PCM, and the DSP
@@ -286,7 +287,7 @@ released again when the call ends. Known limitation: the **loudspeaker**
 enabled — the fix for that lives in the DSP route setup, not userspace.
 
 ```sh
-call +15551234567      # dial
+call +15551234567       # dial
 call                    # list: 0: incoming ringing-in /org/.../Call/8
 call answer             # answer the ringing call
 call hangup             # end all ongoing calls
@@ -352,8 +353,10 @@ All the device-specific paths are constants at the top of the scripts:
 - `phone-gestures`: `SCREEN_W/H`, `KEYBOARD_TOP` (px), the drag→line and
   tap sensitivities, and `UID`/`TMUX`/`SESSION` for the tmux socket
 - `sms-send`: `SMSC_NUMBER` — the message center, read from EF_SMSP on
-  the SIM (this modem sends nothing without it). `49-modem-voice.rules`:
-  the polkit rule names the device user — change `subject.user` to match.
+  the SIM (this modem sends nothing without it). The polkit rule
+  (`49-modem-voice.rules.in`) has an `@USER@` placeholder that
+  `install-telephony.sh` fills in with the device user, so no edit is
+  needed.
 - `call-watcher`: `RING_WAV`, the ring `--volume=` (0–65536 linear), and
   the state/mute flag paths (shared with `phone-volume` and
   `phone-statusbar`)
@@ -361,6 +364,12 @@ All the device-specific paths are constants at the top of the scripts:
   timings) — and the udev rule's `KERNEL=="white:indicator"` match if
   your LED is named differently
 - Colors are RGB tuples near the top of `phone-statusbar`
+
+Nothing names the device user: the installers and the graphical scripts
+(`app`, `app-inner`, `swaybar-user`, `phone-screenshot`) resolve the
+user at run time as the owner of the single home under `/home` — by uid,
+so any username works. The one exception is `phone-gestures`' `UID`
+constant (uid 10000, the postmarketOS default).
 
 **Battery tunables** live in `/etc/phone-statusbar.conf` (template:
 `statusbar/phone-statusbar.conf` in this repo) — no code edits needed, and a
@@ -447,8 +456,9 @@ than two terminal rows.
   device user's `~/.local/bin/`; `call-watcher` — Python call-event
   daemon; `call-watcher.service` — its **user** unit; `ring.wav` — the
   soft two-note chime ringtone it loops (installed to
-  `~/.local/share/ring.wav`); `49-modem-voice.rules` — polkit rule
-  granting the device user voice access over ModemManager, installed to
+  `~/.local/share/ring.wav`); `49-modem-voice.rules.in` — polkit rule
+  template granting the device user voice access over ModemManager
+  (`@USER@` substituted by the installer), installed to
   `/etc/polkit-1/rules.d/`
 - `notify/` — `notify-led` — Python daemon driving the notification LED;
   `notify-clear` — dismisses notification flags, all or by name
