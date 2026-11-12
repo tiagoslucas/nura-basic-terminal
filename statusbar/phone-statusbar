@@ -20,12 +20,16 @@ also repairs any console text that scrolled underneath it. Nothing is
 drawn within 5px of the left/right screen edges.
 
 --text mode: instead of painting the framebuffer, print the same status
-line ("4G 67%   87% 14:05") as plain text on stdout, for sway's built-in
-bar (status_command) inside graphical sessions — the fbcon can't be seen
-behind a compositor. Polled every TEXT_EVERY seconds and printed only on
-change: call-watcher's SIGUSR1 goes to the systemd service (stopped
-during a graphical session), so a ringing call can only be picked up by
-polling /tmp/phone-call-state.
+line ("4G 67%          87% 14:05") as plain text on stdout, for sway's
+built-in bar (status_command) inside graphical sessions — the fbcon
+can't be seen behind a compositor. Battery behaviour matches the console
+daemon: it wakes once per minute (the clock is the fastest-changing
+value), blocks on SIGUSR1 while the screen is dark, and call-watcher /
+phone-screen-toggle poke it directly (the systemd service they'd signal
+is stopped during a session). The line is padded to a fixed width so
+the cellular half sits at the left edge of the bar and battery/clock at
+the right — swaybar right-aligns an unpadded line, which puts the
+cellular info behind the display notch.
 """
 import gzip
 import os
@@ -74,7 +78,11 @@ _cfg = load_config(CONFIG)
 # Battery-tunable timing (seconds); see phone-statusbar.conf. Raising it
 # saves battery at the cost of a staler signal display.
 MODEM_EVERY = _cfg.get("MODEM_EVERY", 300)   # how long a mmcli result is cached
-TEXT_EVERY = 2                               # --text poll interval (seconds)
+TEXT_LEFT = 22    # --text: columns for the cellular/call half
+TEXT_RIGHT = 14   # --text: columns for the battery/clock half
+# 36 columns fills the bar: "monospace 12" renders at 12 pt = 16 logical
+# px (Droid Sans Mono, 0.6 em advance = 9.6 px/char), and the bar is
+# 360 logical px wide — 36 × 9.6 = 346, clear of both edges.
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",
@@ -281,13 +289,31 @@ def status_parts(net):
     return left, lrgb, right, rrgb
 
 
+def _noop(_signum, _frame):
+    pass  # for SIGUSR1: the wakeup-fd byte matters, not the handler
+
+
 def text_mode():
     """Plain-text status line for sway's bar (status_command), e.g.
-    "4G 67%   87% 14:05". Same data and formatting as the fbcon bar;
-    polled and printed only on change, so a ringing call still shows up
-    within seconds (call-watcher's SIGUSR1 can't reach a swaybar child —
-    it targets the systemd service, which is stopped during a session).
-    Modem results stay cached by MODEM_EVERY like on the console."""
+    "4G 67%                    87% 14:05". Same data and formatting as
+    the fbcon bar, and the same battery discipline: one wake per
+    wall-clock minute (the clock is the fastest-changing value) and no
+    polling at all while the screen is dark — it blocks on its SIGUSR1
+    wake pipe. call-watcher pokes it on every call transition (so a ring
+    shows immediately) and phone-screen-toggle's pkill fallback pokes it
+    when the screen lights up again. The line is padded to TEXT_LEFT +
+    TEXT_RIGHT columns so the cellular half sits at the left edge of the
+    bar and battery/clock at the right, clear of the notch (swaybar
+    right-aligns an unpadded line, which parks the cellular info behind
+    the notch; a line wider than the bar is clipped from the left, so
+    the column count is deliberately a little under what fits)."""
+    # Wake pipe: SIGUSR1 drops a byte here via set_wakeup_fd, which
+    # interrupts the select() below (same mechanism as the console bar).
+    r, wfd = os.pipe()
+    os.set_blocking(wfd, False)
+    signal.set_wakeup_fd(wfd)
+    signal.signal(signal.SIGUSR1, _noop)
+
     net = (None, None)
     net_age = 0.0
     last_line = None
@@ -297,11 +323,24 @@ def text_mode():
             net = read_modem()
             net_age = now
         left, _lrgb, right, _rrgb = status_parts(net)
-        line = f"{left}   {right}"
+        # a long RING line must not push the battery/clock off-screen
+        left = left[:TEXT_LEFT]
+        line = f"{left:<{TEXT_LEFT}}{right:>{TEXT_RIGHT}}"
         if line != last_line:
             print(line, flush=True)
             last_line = line
-        time.sleep(TEXT_EVERY)
+        if backlight_on():
+            # wake just after the next minute boundary
+            delay = 60.0 - (time.time() % 60.0) + 0.25
+        else:
+            # dark: block until the SIGUSR1 wake (call-watcher lights the
+            # screen on a ring, phone-screen-toggle on screen-on)
+            delay = None
+        if select.select([r], [], [], delay)[0]:
+            try:
+                os.read(r, 4096)  # drain wake bytes
+            except OSError:
+                pass
 
 
 def main():
@@ -315,9 +354,6 @@ def main():
     r, wfd = os.pipe()
     os.set_blocking(wfd, False)
     signal.set_wakeup_fd(wfd)
-
-    def _noop(_signum, _frame):
-        pass  # the byte matters, not the handler
 
     signal.signal(signal.SIGUSR1, _noop)
 

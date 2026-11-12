@@ -5,8 +5,9 @@ and delete terminated call objects so the list stays clean.
 
 Runs as a user service. Signal listener mirrors sms-forwarder.py.
 Status bar integration: on every call state change, write
-"<state> <number>" to STATE_FILE and SIGUSR1 phone-statusbar (root
-system service, via doas) so it repaints immediately. On an incoming
+"<state> <number>" to STATE_FILE and SIGUSR1 phone-statusbar (the root
+system service, via doas, and the --text instance sway's bar runs
+during graphical sessions) so it repaints immediately. On an incoming
 ring the screen is also lit via phone-screen-toggle --do-toggle, which
 only wakes (never darkens) when the screen-off flag is present.
 """
@@ -103,8 +104,13 @@ def write_state(text):
 
 
 def poke_statusbar():
+    """Signal the console bar (systemd service) and, when a graphical
+    session has that service stopped, the --text instance sway's bar
+    runs instead — both are no-ops when the target isn't running."""
     subprocess.run(["sudo", "-n", "systemctl", "kill", "-s", "SIGUSR1",
                     "phone-statusbar"], capture_output=True)
+    subprocess.run(["pkill", "-USR1", "-f", "/usr/local/bin/phone-statusbar"],
+                   capture_output=True)
 
 
 def wake_screen():

@@ -169,10 +169,10 @@ up yet at boot) is not cached: it retries at the next repaint, so the
 bar recovers within a minute instead of showing NO NET for the whole
 `MODEM_EVERY` window. The same script has a `--text` mode for graphical
 sessions (see **Graphical apps**): instead of painting the framebuffer it
-prints the identical status line for sway's bar, polling every 2 s — the
-systemd service (and with it call-watcher's SIGUSR1 poke) is stopped
-while a session runs, so a ringing call is picked up by polling
-`/tmp/phone-call-state`.
+prints the identical status line for sway's bar, with the same battery
+discipline — one wake per minute and none while the screen is dark;
+call-watcher pokes it with SIGUSR1 on every call transition, since the
+systemd service it would signal is stopped while a session runs.
 
 **Gestures** (`phone-gestures`): fbcon has no scrollback, so tty1 logins
 are wrapped in tmux (a `/etc/profile.d` hook execs `tmux new-session -A -s
@@ -331,12 +331,15 @@ vol-up + power combo (or `phone-screenshot` directly), saved to
 The status bar comes along too: sway's own bar runs across the top (32
 logical px, like the fbcon one; the window title bar is off —
 `default_border none`), fed by `phone-statusbar --text` as its
-`status_command`. Sway spawns its bar as root, and root's swaybar can't
-work here — with the user session bus present its tray code segfaults,
-without a bus it exits — so `swaybar_command` points at `swaybar-user`,
-which opens the root-owned sway sockets, drops to the device user and
-runs the real swaybar from there. A ring still shows (as `RING`) within
-the 2 s poll.
+`status_command`. The line is padded to fill the bar width, so the
+cellular half sits at the left edge and battery/clock at the right,
+clear of the notch — swaybar right-aligns an unpadded line. Sway spawns
+its bar as root, and root's swaybar can't work here — with the user
+session bus present its tray code segfaults, without a bus it exits —
+so `swaybar_command` points at `swaybar-user`, which opens the
+root-owned sway sockets, drops to the device user and runs the real
+swaybar from there. A ring still shows immediately: call-watcher
+SIGUSR1s the `--text` instance directly.
 
 ## Customizing
 
