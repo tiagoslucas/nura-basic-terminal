@@ -1,5 +1,6 @@
 #!/bin/sh
-# Power button handler. Run as root by hkdm on KEY_POWER release.
+# Power button handler. Run as root by hkdm on KEY_POWER press and release.
+#   9 s hold: power the device off
 #   double click (releases <450ms apart): toggle the on-screen keyboard
 #                                          (stop/start buffyboard)
 #   single click: toggle the screen on/off, after a short delay so a
@@ -10,8 +11,16 @@
 STATE_DIR=/run/phone-buttons
 BL=/sys/class/backlight/backlight
 DOUBLECLICK_CS=45   # double-click window in centiseconds
+HOLD_CS=900         # power-button hold that powers off (9 s — at 10 s the
+                    # PMIC hard-resets the phone before userspace can)
 
 mkdir -p "$STATE_DIR"
+
+if [ "$1" = "--pressed" ]; then
+    # timestamp the press so the release handler can measure the hold
+    awk '{printf "%d", $1*100}' /proc/uptime > "$STATE_DIR/power-down-cs"
+    exit 0
+fi
 
 if [ "$1" = "--do-toggle" ]; then
     # Delayed single-click path (spawned by this script itself)
@@ -51,6 +60,25 @@ fi
 
 # --- double-click discrimination (timestamps from /proc/uptime, centis) ---
 now_cs=$(awk '{printf "%d", $1*100}' /proc/uptime)
+
+# --- 9 s hold: power off. A stamp older than 60 s is stale (hkdm
+# restarted mid-press) — never power off from one. ---
+down_cs=$(cat "$STATE_DIR/power-down-cs" 2>/dev/null || echo 0)
+held_cs=$((now_cs - down_cs))
+if [ "$down_cs" -gt 0 ] && [ "$held_cs" -ge "$HOLD_CS" ] && [ "$held_cs" -lt 6000 ]; then
+    rm -f "$STATE_DIR/power-single-pending"
+    poweroff
+    exit 0
+fi
+
+# Vol-up held + power click: screenshot the graphical session
+if [ -f /tmp/phone-volup-held ]; then
+    rm -f "$STATE_DIR/power-single-pending"
+    touch "$STATE_DIR/power-recent"
+    /usr/local/bin/phone-screenshot
+    exit 0
+fi
+
 last_cs=$(cat "$STATE_DIR/power-last" 2>/dev/null || echo 0)
 echo "$now_cs" > "$STATE_DIR/power-last"
 # phone-font's ttyescape guard keys off this file's mtime
@@ -63,7 +91,19 @@ if [ $((now_cs - last_cs)) -ge 0 ] && [ $((now_cs - last_cs)) -lt $DOUBLECLICK_C
     if [ ! -f "$STATE_DIR/screen-off" ]; then
         rm -f "$STATE_DIR/power-single-pending"
     fi
-    if systemctl is-active --quiet buffyboard; then
+    if pgrep -x sway >/dev/null; then
+        # graphical session: buffyboard is stopped (its fbcon is hidden
+        # behind sway); toggle the wayland keyboard instead. wvkbd's
+        # signals are one-way (USR1 hide, USR2 show), so track visibility
+        # in a marker file; phone-app-inner clears it at session start.
+        if [ -f "$STATE_DIR/wvkbd-shown" ]; then
+            pkill -USR1 -x wvkbd-mobintl
+            rm -f "$STATE_DIR/wvkbd-shown"
+        else
+            pkill -USR2 -x wvkbd-mobintl
+            touch "$STATE_DIR/wvkbd-shown"
+        fi
+    elif systemctl is-active --quiet buffyboard; then
         systemctl stop buffyboard    # reset_all() restores full console rows
     else
         systemctl start buffyboard   # shrink_current() on start

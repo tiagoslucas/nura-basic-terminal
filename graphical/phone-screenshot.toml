@@ -1,0 +1,18 @@
+# Screenshot combo: vol-up held + power click (phone-screenshot).
+# These bindings only track whether vol-up is currently held, via a
+# marker file; phone-screen-toggle sees the power click and runs the
+# capture while the marker exists. The ttyescape combo (vol-down +
+# power) is untouched, in its own ttyescape.toml.
+[[events]]
+name = "vol-up held marker on"
+event_type = "EV_KEY"
+key_state = "pressed"
+keys = ["KEY_VOLUMEUP"]
+command = "/bin/touch /tmp/phone-volup-held"
+
+[[events]]
+name = "vol-up held marker off"
+event_type = "EV_KEY"
+key_state = "released"
+keys = ["KEY_VOLUMEUP"]
+command = "/bin/rm -f /tmp/phone-volup-held"

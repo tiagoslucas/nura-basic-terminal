@@ -17,17 +17,19 @@ mkdir -p "$STATE_DIR"
 [ -f "$STATE_DIR/font-index" ] || echo $MAX > "$STATE_DIR/font-index"
 idx=$(cat "$STATE_DIR/font-index")
 
+# Combos holding a volume key across a power press (ttyescape =
+# vol-down + power, screenshot = vol-up + power) end with a volume
+# release; don't step the font right after power use.
+if [ -f "$STATE_DIR/power-recent" ] && \
+   [ $(( $(date +%s) - $(stat -c %Y "$STATE_DIR/power-recent") )) -lt 2 ]; then
+    exit 0
+fi
+
 case "$1" in
     up)
         idx=$((idx + 1))
         ;;
     down)
-        # The ttyescape combo (hold vol-down, tap power) ends with a
-        # vol-down release; don't shrink the font right after power use.
-        if [ -f "$STATE_DIR/power-recent" ] && \
-           [ $(( $(date +%s) - $(stat -c %Y "$STATE_DIR/power-recent") )) -lt 2 ]; then
-            exit 0
-        fi
         idx=$((idx - 1))
         ;;
     *)

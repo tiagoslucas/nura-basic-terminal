@@ -1,0 +1,23 @@
+#!/bin/sh
+# app CMD [ARGS...] — run a graphical (Wayland) app fullscreen on the
+# phone, like cage did but with a 3x-scaled display and an on-screen
+# keyboard. sway kiosk on VT3; the app runs as tiagol and sway exits when
+# the app does. While the session is up: power double-click toggles the
+# keyboard (wvkbd), vol-up held + power click saves a screenshot to
+# ~tiagol/Pictures. Console stack (buffyboard/statusbar/gestures) is
+# paused meanwhile and restored afterwards.
+# Usage from the console: sudo app firefox
+set -e
+[ $# -ge 1 ] || { echo "usage: app CMD [ARGS...]" >&2; exit 1; }
+export PHONE_APP_CMD="$*"
+
+# wayland socket dir shared by sway (root), wvkbd (root) and the app (tiagol)
+export XDG_RUNTIME_DIR=/run/user/10000
+
+systemctl stop buffyboard.service phone-statusbar.service phone-gestures.service
+trap 'systemctl start buffyboard.service phone-statusbar.service phone-gestures.service; chvt 1' EXIT INT TERM
+
+# sway must own the active VT (VT3; console is on VT1); seatd-launch gives it
+# a seat outside a logind session; -w keeps this script alive until the app
+# exits, so the trap only restores the console afterwards
+openvt -f -c 3 -s -w -- seatd-launch -- sway -c /etc/app-sway.conf
