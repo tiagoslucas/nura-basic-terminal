@@ -18,6 +18,14 @@ nothing: the backlight has a single writer (phone-screen-toggle) which
 SIGUSR1s this daemon whenever it lights the screen again. Each repaint
 also repairs any console text that scrolled underneath it. Nothing is
 drawn within 5px of the left/right screen edges.
+
+--text mode: instead of painting the framebuffer, print the same status
+line ("4G 67%   87% 14:05") as plain text on stdout, for sway's built-in
+bar (status_command) inside graphical sessions — the fbcon can't be seen
+behind a compositor. Polled every TEXT_EVERY seconds and printed only on
+change: call-watcher's SIGUSR1 goes to the systemd service (stopped
+during a graphical session), so a ringing call can only be picked up by
+polling /tmp/phone-call-state.
 """
 import gzip
 import os
@@ -25,6 +33,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import time
 
 FB = "/dev/fb0"
@@ -65,6 +74,7 @@ _cfg = load_config(CONFIG)
 # Battery-tunable timing (seconds); see phone-statusbar.conf. Raising it
 # saves battery at the cost of a staler signal display.
 MODEM_EVERY = _cfg.get("MODEM_EVERY", 300)   # how long a mmcli result is cached
+TEXT_EVERY = 2                               # --text poll interval (seconds)
 
 TECH_LABEL = {
     "lte": "4G", "nr": "5G", "nr5g": "5G",
@@ -234,6 +244,66 @@ def backlight_on():
         return True
 
 
+def status_parts(net):
+    """(left, left_rgb, right, right_rgb) for right now — the formatting
+    shared by the fbcon bar and --text mode. `net` is the cached modem
+    result (tech, sig)."""
+    tech, sig = net
+    if tech:
+        label = TECH_LABEL.get(tech, tech.upper())
+        left = f"{label} {sig}%" if sig is not None else label
+        lrgb = WHITE if (sig is None or sig >= 15) else RED
+    else:
+        left, lrgb = "NO NET", RED
+
+    # incoming/ongoing call indicator (on the console, call-watcher
+    # pokes the daemon with SIGUSR1 on every transition, so this shows
+    # up the moment the phone starts ringing)
+    cstate, cnum = read_call_state()
+    if cstate == "ringing":
+        left, lrgb = f"RING {cnum} {left}", GREEN
+    elif cstate == "active":
+        left = f"CALL {cnum} {left}"
+
+    cap, status = read_battery()
+    if cap is None:
+        right, rrgb = "?BAT", RED
+    elif status == "Full":
+        right, rrgb = "FULL", GREEN
+    elif status == "Charging":
+        right, rrgb = f"CHG {cap}%", GREEN
+    else:
+        right = f"{cap}%"
+        rrgb = RED if cap <= 15 else WHITE
+
+    # clock beside the battery, e.g. "87% 14:05"
+    right += time.strftime(" %H:%M")
+    return left, lrgb, right, rrgb
+
+
+def text_mode():
+    """Plain-text status line for sway's bar (status_command), e.g.
+    "4G 67%   87% 14:05". Same data and formatting as the fbcon bar;
+    polled and printed only on change, so a ringing call still shows up
+    within seconds (call-watcher's SIGUSR1 can't reach a swaybar child —
+    it targets the systemd service, which is stopped during a session).
+    Modem results stay cached by MODEM_EVERY like on the console."""
+    net = (None, None)
+    net_age = 0.0
+    last_line = None
+    while True:
+        now = time.time()
+        if now - net_age >= MODEM_EVERY:
+            net = read_modem()
+            net_age = now
+        left, _lrgb, right, _rrgb = status_parts(net)
+        line = f"{left}   {right}"
+        if line != last_line:
+            print(line, flush=True)
+            last_line = line
+        time.sleep(TEXT_EVERY)
+
+
 def main():
     w, _h = map(int, open(f"{SYSFB}/virtual_size").read().split(","))
     stride = int(open(f"{SYSFB}/stride").read().strip())
@@ -266,37 +336,7 @@ def main():
                     if now - net_age >= MODEM_EVERY:
                         net = read_modem()   # wakes ModemManager: cache it
                         net_age = now
-                    cap, status = read_battery()
-
-                    tech, sig = net
-                    if tech:
-                        label = TECH_LABEL.get(tech, tech.upper())
-                        left = f"{label} {sig}%" if sig is not None else label
-                        lrgb = WHITE if (sig is None or sig >= 15) else RED
-                    else:
-                        left, lrgb = "NO NET", RED
-
-                    # incoming/ongoing call indicator (call-watcher pokes
-                    # us with SIGUSR1 on every transition, so this shows
-                    # up the moment the phone starts ringing)
-                    cstate, cnum = read_call_state()
-                    if cstate == "ringing":
-                        left, lrgb = f"RING {cnum} {left}", GREEN
-                    elif cstate == "active":
-                        left = f"CALL {cnum} {left}"
-
-                    if cap is None:
-                        right, rrgb = "?BAT", RED
-                    elif status == "Full":
-                        right, rrgb = "FULL", GREEN
-                    elif status == "Charging":
-                        right, rrgb = f"CHG {cap}%", GREEN
-                    else:
-                        right = f"{cap}%"
-                        rrgb = RED if cap <= 15 else WHITE
-
-                    # clock beside the battery, e.g. "87% 14:05"
-                    right += time.strftime(" %H:%M")
+                    left, lrgb, right, rrgb = status_parts(net)
 
                     band = (left, right)
                     if band != last_band:
@@ -325,4 +365,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--text" in sys.argv:
+        text_mode()
+    else:
+        main()

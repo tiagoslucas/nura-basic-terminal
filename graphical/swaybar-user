@@ -1,0 +1,17 @@
+#!/bin/sh
+# swaybar-user — run by sway (as root) instead of swaybar, via
+# swaybar_command in /etc/app-sway.conf. Root's swaybar can't use the
+# user session bus: with the bus present its tray code segfaults, without
+# it exits — so drop to tiagol, whose bus and runtime dir these are, and
+# run the real swaybar from there. Both sway sockets are root-owned at
+# this point (app-inner's chmod comes later) and the WAYLAND_SOCKET fd
+# sway hands us doesn't survive sudo, so open the socket paths and make
+# swaybar connect by name.
+unset WAYLAND_SOCKET
+chmod 666 "$SWAYSOCK" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" 2>/dev/null
+exec sudo -u tiagol env \
+    SWAYSOCK="$SWAYSOCK" \
+    WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+    XDG_RUNTIME_DIR=/run/user/10000 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/10000/bus \
+    /usr/bin/swaybar "$@"

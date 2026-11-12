@@ -17,8 +17,10 @@ apk add sway wvkbd seatd-launch grim 2>/dev/null || true
 backup /usr/local/bin/app "$SRC/graphical/app"
 backup /usr/local/bin/app-inner "$SRC/graphical/app-inner"
 backup /usr/local/bin/phone-screenshot "$SRC/graphical/phone-screenshot"
+backup /usr/local/bin/swaybar-user "$SRC/graphical/swaybar-user"
 install -m 755 "$SRC/graphical/app" "$SRC/graphical/app-inner" \
-    "$SRC/graphical/phone-screenshot" /usr/local/bin/
+    "$SRC/graphical/phone-screenshot" "$SRC/graphical/swaybar-user" \
+    /usr/local/bin/
 backup /etc/app-sway.conf "$SRC/graphical/app-sway.conf"
 install -m 644 -o root -g root "$SRC/graphical/app-sway.conf" /etc/
 backup /etc/hkdm/config.d/phone-screenshot.toml "$SRC/graphical/phone-screenshot.toml"
