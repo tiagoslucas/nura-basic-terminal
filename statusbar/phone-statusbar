@@ -208,6 +208,14 @@ def read_battery():
     try:
         cap = int(open(f"{BATTERY}/capacity").read().strip())
         status = open(f"{BATTERY}/status").read().strip()
+        # The pmi8994 fuel gauge's status word is wrong on this port
+        # (claims Charging while discharging); the current sign isn't.
+        try:
+            current = int(open(f"{BATTERY}/current_now").read().strip())
+        except (OSError, ValueError):
+            current = 0
+        if status == "Charging" and current <= 0:
+            status = "Discharging"
         return cap, status
     except (OSError, ValueError):
         return None, ""
@@ -276,8 +284,6 @@ def status_parts(net):
     cap, status = read_battery()
     if cap is None:
         right, rrgb = "?BAT", RED
-    elif status == "Full":
-        right, rrgb = "FULL", GREEN
     elif status == "Charging":
         right, rrgb = f"CHG {cap}%", GREEN
     else:
