@@ -1,6 +1,8 @@
 # nura-basic-terminal
 
-![Firefox on the NuraOS site, running fullscreen via `app`](screenshots/firefox-nuraos.png)
+<p align="center">
+  <img src="screenshots/firefox-nuraos.png" width="540" alt="Firefox on the NuraOS site, running fullscreen via `app` — the status bar shows the SMS and missed-call indicators next to the signal strength">
+</p>
 
 Make a postmarketOS phone usable **without a GUI** — and give it one when
 you want it (`app firefox`, above). If your phone runs a bare
@@ -466,7 +468,7 @@ than two terminal rows.
   (doas-rule template, `@USER@` filled in by the installer),
   `app-alias.sh` (profile.d alias `app` → `doas app`)
 - `screenshots/` — `firefox-nuraos.png`, taken on the device with
-  vol-up + power
+  vol-up + power; the bar shows the SMS and missed-call indicators
 - `statusbar/` — `phone-statusbar` — Python daemon;
   `phone-statusbar.service` — its unit; `phone-statusbar.conf` — battery
   tunables, installed to `/etc/phone-statusbar.conf`;
