@@ -5,6 +5,8 @@
   active      steady on     a call is in progress
   missed      slow blink    a call rang out unanswered — until `notify-clear`
   unread SMS  double blink  an SMS arrived — until `notify-clear`
+  charging    steady on     battery is charging — lowest priority: any
+                           notification pattern above overrides it
 
 Runs as a user service next to call-watcher, but is self-contained: it
 watches ModemManager itself, so it works without the telephony component.
@@ -26,6 +28,8 @@ import time
 
 MM_NAME = "org.freedesktop.ModemManager1"
 LED = "/sys/class/leds/white:indicator/brightness"
+BATTERY_STATUS = "/sys/class/power_supply/qcom-battery/status"
+BATTERY_CURRENT = "/sys/class/power_supply/qcom-battery/current_now"
 STATE_DIR = os.path.expanduser("~/.local/state/notify-led")
 MISSED_FLAG = os.path.join(STATE_DIR, "missed")
 SMS_FLAG = os.path.join(STATE_DIR, "sms")
@@ -48,6 +52,7 @@ PATTERNS = {
     "active": (1000, [(0, 1000)]),
     "missed": (1000, [(0, 400)]),
     "sms": (1000, [(0, 100), (200, 300)]),
+    "charge": (1000, [(0, 1000)]),
 }
 
 
@@ -151,6 +156,19 @@ def led_write(on):
         pass  # LED absent or not writable: keep tracking flags anyway
 
 
+def charging():
+    try:
+        with open(BATTERY_STATUS) as f:
+            if f.read().strip() != "Charging":
+                return False
+        # the gauge's status word is wrong on this port (claims Charging
+        # while discharging — see phone-statusbar): trust the current sign
+        with open(BATTERY_CURRENT) as f:
+            return int(f.read().strip()) > 0
+    except (OSError, ValueError):
+        return False
+
+
 def current_mode(tracker):
     states = tracker.live_states()
     if "ringing-in" in states:
@@ -161,6 +179,8 @@ def current_mode(tracker):
         return "missed"
     if os.path.exists(SMS_FLAG):
         return "sms"
+    if charging():
+        return "charge"
     return None
 
 
@@ -182,7 +202,8 @@ def main():
             if on != last:
                 led_write(on)
                 last = on
-            time.sleep(0.05 if mode else 0.5)
+            # charging needs no pattern resolution: poll it at idle pace
+            time.sleep(0.05 if mode not in (None, "charge") else 0.5)
     finally:
         led_write(False)
 
