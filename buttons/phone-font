@@ -47,3 +47,8 @@ font="$CF/$(echo $FONTS | cut -d' ' -f$((idx + 1))).psf.gz"
 for t in /dev/tty1 /dev/tty2; do
     [ -c "$t" ] && setfont -C "$t" "$font" 2>/dev/null
 done
+
+# setfont resets the VC to full rows and repaints, wiping the on-screen
+# keyboard: have buffyboard re-shrink the console and redraw (same nudge
+# the screen-wake path uses).
+pkill -USR1 buffyboard 2>/dev/null

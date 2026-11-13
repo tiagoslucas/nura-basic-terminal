@@ -1,0 +1,110 @@
+--- a/buffyboard/terminal.h
++++ b/buffyboard/terminal.h
+@@ -21,8 +21,10 @@
+ 
+ /**
+  * Shrink the height of the active terminal.
++ *
++ * @return true if the row count was changed (caller should redraw)
+  */
+-void bb_terminal_shrink_current();
++bool bb_terminal_shrink_current();
+ 
+ /**
+  * Re-maximise the size of all active terminals.
+--- a/buffyboard/terminal.c
++++ b/buffyboard/terminal.c
+@@ -28,6 +28,7 @@
+ static int32_t _h_display_size;
+ static int32_t _v_display_size;
+ static int _last_set_rows = -1;
++static int _last_set_cols = -1;
+ 
+ 
+ /**
+@@ -80,10 +81,11 @@
+     _v_display_size = v_display_size;
+ }
+ 
+-void bb_terminal_shrink_current() {
++bool bb_terminal_shrink_current() {
++    bool changed = false;
+     int fd = open("/dev/tty0", O_RDONLY|O_NOCTTY);
+     if (fd < 0)
+-        return;
++        return false;
+ 
+     int mode;
+     if (ioctl(fd, KDGETMODE, &mode) != 0)
+@@ -100,8 +102,11 @@
+     if (ioctl(fd, TIOCGWINSZ, &size) != 0)
+         goto end;
+ 
+-    /* Nothing to do if the console still has the row count we last set */
+-    if (_last_set_rows > 0 && size.ws_row == _last_set_rows)
++    /* Nothing to do if the console still has the row count we last set.
++     * The column count must match too: a font change can leave the row
++     * count at a value that was shrunk for the old font but is full for
++     * the new one, and only the columns reveal the font changed. */
++    if (_last_set_rows > 0 && size.ws_row == _last_set_rows && size.ws_col == _last_set_cols)
+         goto end;
+ 
+     int max_rows = grow_to_max_rows(fd, &size);
+@@ -116,10 +121,14 @@
+         new_rows = 1;
+ 
+     size.ws_row = new_rows;
+-    if (ioctl(fd, TIOCSWINSZ, &size) == 0)
++    if (ioctl(fd, TIOCSWINSZ, &size) == 0) {
+         _last_set_rows = new_rows;
++        _last_set_cols = size.ws_col;
++        changed = true;
++    }
+ end:
+     close(fd);
++    return changed;
+ }
+ 
+ void bb_terminal_reset_all() {
+--- a/buffyboard/main.c
++++ b/buffyboard/main.c
+@@ -56,6 +56,15 @@
+ static void signal_handler(int signum);
+ 
+ /**
++ * Periodically re-assert the console shrink. setfont and other VT resizes
++ * can grow the console back over the keyboard area without any notification;
++ * if the row count drifted, re-shrink and redraw the keyboard.
++ *
++ * @param timer the timer object
++ */
++static void shrink_assert_cb(lv_timer_t *timer);
++
++/**
+  * Handle LV_EVENT_VALUE_CHANGED events from the keyboard widget.
+  * 
+  * @param event the event object
+@@ -95,6 +104,12 @@
+     exit(0);
+ }
+ 
++static void shrink_assert_cb(lv_timer_t *timer) {
++    (void) timer;
++    if (bb_terminal_shrink_current())
++        lv_obj_invalidate(keyboard);
++}
++
+ static void keyboard_value_changed_cb(lv_event_t *event) {
+     lv_obj_t *kb = lv_event_get_target(event);
+ 
+@@ -326,6 +341,10 @@
+         return EXIT_FAILURE;
+     }
+ 
++    /* Keep the console shrunk: nothing notifies us when setfont or another
++     * VT resize grows it back over the keyboard. */
++    lv_timer_create(shrink_assert_cb, 500, NULL);
++
+     /* Set signal handlers */
+     struct sigaction action;
+     action.sa_handler = signal_handler;
