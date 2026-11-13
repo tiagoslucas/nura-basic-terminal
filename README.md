@@ -521,5 +521,13 @@ than two terminal rows.
 
 ## License
 
-MIT, to match Terminus. Scripts written for a postmarketOS phone; no
-warranty.
+MIT (see `LICENSE`) — covers the scripts and tooling written for this repo.
+No warranty.
+
+Two exceptions keep their upstream licenses and are **not** MIT:
+
+- `buffyboard/` — patches against GPL-3.0-or-later buffyboard; the patches
+  are derivative works and are GPL-3.0-or-later (see `buffyboard/README.md`)
+- `fonts/` — the Terminus font files (`ter-116n.psf.gz` and the scaled
+  `ter-148n.psf.gz`) are SIL Open Font License 1.1; the scaler scripts are
+  MIT (see `fonts/README.md`)
