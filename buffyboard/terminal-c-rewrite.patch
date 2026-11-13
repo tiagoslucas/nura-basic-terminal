@@ -1,0 +1,138 @@
+--- a/buffyboard/terminal.c
++++ b/buffyboard/terminal.c
+@@ -3,10 +3,12 @@
+  * SPDX-License-Identifier: GPL-3.0-or-later
+  */
+ 
++
+ #include "terminal.h"
+ 
+ #include "../shared/indev.h"
+ 
++#include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
+ #include <stdio.h>
+@@ -25,6 +27,47 @@
+ static int32_t _tty_size;
+ static int32_t _h_display_size;
+ static int32_t _v_display_size;
++static int _last_set_rows = -1;
++
++
++/**
++ * Static prototypes
++ */
++
++/**
++ * Grow the console to its maximum row count and return it. KDFONTOP-based
++ * font metrics are not used because GET is broken on some kernels (it
++ * returns ENOSPC for fonts taller than 32 pixels), so the maximum is
++ * determined by test-resizing instead.
++ *
++ * @param fd TTY file descriptor
++ * @param size pointer to the terminal's current size (updated in place)
++ * @return the maximum row count, or -1 on failure
++ */
++static int grow_to_max_rows(int fd, struct winsize *size);
++
++
++/**
++ * Static functions
++ */
++
++static int grow_to_max_rows(int fd, struct winsize *size) {
++    struct winsize probe = *size;
++
++    /* Test-resize by two rows. If the console is already maximised this
++     * fails with EINVAL and we can exit early without changing anything. */
++    probe.ws_row = size->ws_row + 2;
++    if (ioctl(fd, TIOCSWINSZ, &probe) != 0)
++        return size->ws_row;
++
++    /* Not at max: keep growing in steps of two until it fails. */
++    do {
++        size->ws_row = probe.ws_row;
++        probe.ws_row += 2;
++    } while (probe.ws_row < 1000 && ioctl(fd, TIOCSWINSZ, &probe) == 0);
++
++    return size->ws_row;
++}
+ 
+ 
+ /**
+@@ -53,20 +96,28 @@
+         goto end;
+     }
+ 
+-    struct console_font_op cfo = {
+-        .op = KD_FONT_OP_GET,
+-        .width = UINT_MAX,
+-        .height = UINT_MAX,
+-        .charcount = UINT_MAX,
+-        .data = NULL
+-    };
+-    if (ioctl(fd, KDFONTOP, &cfo) != 0)
++    struct winsize size;
++    if (ioctl(fd, TIOCGWINSZ, &size) != 0)
+         goto end;
+ 
+-    struct winsize size;
+-    size.ws_row = _tty_size / cfo.height;
+-    size.ws_col = _h_display_size / cfo.width;
+-    ioctl(fd, TIOCSWINSZ, &size);
++    /* Nothing to do if the console still has the row count we last set */
++    if (_last_set_rows > 0 && size.ws_row == _last_set_rows)
++        goto end;
++
++    int max_rows = grow_to_max_rows(fd, &size);
++    if (max_rows < 1)
++        goto end;
++
++    /* Shrink the row count proportionally to the terminal area left over
++     * when the keyboard is on screen (the column count already reflects
++     * the font width, so it is left untouched). */
++    int new_rows = max_rows * _tty_size / _v_display_size;
++    if (new_rows < 1)
++        new_rows = 1;
++
++    size.ws_row = new_rows;
++    if (ioctl(fd, TIOCSWINSZ, &size) == 0)
++        _last_set_rows = new_rows;
+ end:
+     close(fd);
+ }
+@@ -95,31 +146,9 @@
+             if (tty_fd < 0)
+                 continue;
+ 
+-            /* KDFONTOP returns EINVAL if we are not in the text mode,
+-               so we can skip this check */
+-/*
+-            int mode;
+-            if (ioctl(tty_fd, KDGETMODE, &mode) != 0)
+-                goto end;
+-
+-            if (mode != KD_TEXT)
+-                goto end;
+-*/
+-            struct console_font_op cfo = {
+-                .op = KD_FONT_OP_GET,
+-                .width = UINT_MAX,
+-                .height = UINT_MAX,
+-                .charcount = UINT_MAX,
+-                .data = NULL
+-            };
+-            if (ioctl(tty_fd, KDFONTOP, &cfo) != 0)
+-                goto end;
+-
+             struct winsize size;
+-            size.ws_row = _v_display_size / cfo.height;
+-            size.ws_col = _h_display_size / cfo.width;
+-            ioctl(tty_fd, TIOCSWINSZ, &size);
+-end:
++            if (ioctl(tty_fd, TIOCGWINSZ, &size) == 0)
++                grow_to_max_rows(tty_fd, &size);
+             close(tty_fd);
+         }
+     }
