@@ -1,0 +1,48 @@
+#!/bin/sh
+# Self-check for the power-button hold logic. Run as root on the phone
+# after install-buttons.sh:
+#   doas sh /tmp/basic-terminal/buttons/test-power-hold
+# Puts a fake `poweroff` on PATH — the real one is never called.
+set -e
+SD=/run/phone-buttons
+TOOL=/usr/local/bin/phone-screen-toggle
+
+mkdir -p "$SD" /tmp/fakebin
+printf '#!/bin/sh\necho POWEROFF-CALLED\n' > /tmp/fakebin/poweroff
+chmod 755 /tmp/fakebin/poweroff
+
+# reset the double-click window so consecutive runs stay "single clicks"
+single() {
+    echo 0 > "$SD/power-last"
+    PATH=/tmp/fakebin:$PATH "$TOOL"
+}
+
+# 11 s "hold" -> the poweroff path
+awk '{printf "%d", $1*100-1100}' /proc/uptime > "$SD/power-down-cs"
+out=$(single)
+[ "$out" = "POWEROFF-CALLED" ] || { echo "FAIL: 11s hold gave [$out]"; exit 1; }
+
+# fresh press stamp (<10 s) -> normal path, no poweroff
+awk '{printf "%d", $1*100-1}' /proc/uptime > "$SD/power-down-cs"
+out=$(single)
+[ "$out" != "POWEROFF-CALLED" ] || { echo "FAIL: short press powered off"; exit 1; }
+
+# stale stamp (1 h old) -> normal path, no poweroff
+awk '{printf "%d", $1*100-360000}' /proc/uptime > "$SD/power-down-cs"
+out=$(single)
+[ "$out" != "POWEROFF-CALLED" ] || { echo "FAIL: stale stamp powered off"; exit 1; }
+
+# --pressed writes a current stamp
+"$TOOL" --pressed
+now=$(awk '{printf "%d", $1*100}' /proc/uptime)
+age=$((now - $(cat "$SD/power-down-cs")))
+[ "$age" -ge 0 ] && [ "$age" -lt 100 ] || { echo "FAIL: --pressed stamp age ${age}cs"; exit 1; }
+
+# the normal-path runs armed a screen toggle; let it fire and undo it, so
+# the screen ends up where it started
+sleep 0.7
+awk '{printf "%d", $1*100-1}' /proc/uptime > "$SD/power-down-cs"
+single >/dev/null
+sleep 0.7
+rm -rf /tmp/fakebin
+echo "POWER-HOLD TESTS OK"

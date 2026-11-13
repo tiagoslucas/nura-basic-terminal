@@ -5,6 +5,14 @@
 # phone-telephony.toml) — hkdm runs every matching binding, and
 # phone-font stands down while a call is ringing or active.
 
+# Timestamp every press so the release handler can measure the hold
+[[events]]
+name = "power press"
+event_type = "EV_KEY"
+key_state = "pressed"
+keys = ["KEY_POWER"]
+command = "/usr/local/bin/phone-screen-toggle --pressed"
+
 [[events]]
 name = "screen toggle"
 event_type = "EV_KEY"
